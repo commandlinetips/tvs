@@ -46,7 +46,7 @@ python3.13 tvs.py --url <URL>
 
 **Example:**
 ```bash
-python3.13 tvs.py -u https://youtube.com/shorts/8YULk160fIw
+python3.13 tvs.py -u https://vediosite.com/123
 ```
 
 ### Batch Processing
@@ -67,8 +67,8 @@ python3.13 tvs.py --list my-videos.txt
 # Comments start with #
 # Blank lines are ignored
 
-https://youtube.com/watch?v=VIDEO1
-https://youtube.com/shorts/VIDEO2
+https://vediosite.com/123
+https://vediosite.com/123
 
 # Another comment
 https://youtu.be/VIDEO3
@@ -246,94 +246,4 @@ For very long videos (>1 hour), you may need to increase the timeout in the scri
 success, stdout, stderr = run_command(cmd, cwd=VIDEOS_DIR, timeout=1800)  # 30 min
 ```
 
-## Advanced Usage
 
-### Create Alias
-
-Add to your `~/.bashrc` or `~/.zshrc`:
-```bash
-alias tvs='python3.13 /home/skull/tools/automation/tvs/tvs.py'
-```
-
-Then use simply:
-```bash
-tvs -u https://youtube.com/watch?v=VIDEO_ID
-tvs --list my-videos.txt
-```
-
-### Cron Job for Scheduled Processing
-
-Create a cron job to process a list of URLs daily:
-```bash
-0 2 * * * python3.13 /home/skull/tools/automation/tvs/tvs.py --list /home/skull/daily-videos.txt >> /home/skull/tvs.log 2>&1
-```
-
-## File Structure
-
-```
-tvs/
-├── tvs.py                    # Main script ⭐
-├── tvs.md                    # Complete documentation
-├── README.md                 # This file
-├── test-urls.txt             # Sample URL list
-└── agent-updates.md          # Agent configuration docs
-```
-
-## Architecture
-
-### Key Design Principles
-
-1. **Vibe-Only Transcription** - Never falls back to ffmpeg or other tools
-2. **Idempotent Operations** - Can re-run without side effects
-3. **Clear Error Messages** - Always provides actionable troubleshooting
-4. **Colored Output** - Visual feedback for better UX
-5. **Batch Processing** - Efficient handling of multiple videos
-
-### Function Overview
-
-| Function | Purpose |
-|----------|---------|
-| `validate_environment()` | Check tools and paths |
-| `download_video(url)` | Download with yt-dlp |
-| `transcribe_video(file)` | Transcribe with vibe |
-| `copy_transcript(file)` | Backup transcript |
-| `generate_summary(file)` | Create markdown summary |
-| `process_single_video(url)` | Full workflow for one video |
-| `main()` | Argument parsing and mode selection |
-
-## Version History
-
-### v2.0 (2025-10-31)
-- ✅ Added batch processing with `--list` option
-- ✅ Added smart download detection (skip if exists)
-- ✅ Improved error messages
-- ✅ Added colored terminal output
-- ✅ Added batch statistics
-
-### v1.0 (2025-10-31)
-- ✅ Initial release
-- ✅ Single video processing
-- ✅ Vibe-only transcription
-- ✅ Automatic summarization
-
-## Related Files
-
-- **Agent Configuration:** `/home/skull/.config/opencode/agent/video-summarizer.md`
-- **Documentation:** `/home/skull/tools/automation/tvs/tvs.md`
-- **Script:** `/home/skull/tools/automation/tvs/tvs.py`
-
-## License
-
-This tool is provided as-is for personal and educational use.
-
-## Author
-
-**skull@omarchy**
-Created: 2025-10-31
-
----
-
-**Need Help?**
-- Check `python3.13 tvs.py --help`
-- Review troubleshooting section above
-- Read full documentation in `tvs.md`
