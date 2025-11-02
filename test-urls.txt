@@ -1,0 +1,7 @@
+# TVS Test URLs
+# One URL per line, blank lines and # comments are ignored
+
+# This is the Omarchy Ferrari video we already tested
+https://youtube.com/shorts/8YULk160fIw
+
+# Add more URLs here for batch processing
