@@ -11,7 +11,29 @@ plans.md
 tvs-output.log
 
 tvs.md
-
+CLAUDE.md
 tvs_walker_integration_guide.md
 
 walker_detailed_files_reference.md
+
+wisdom.md
+
+workflow-inspiration.md
+
+# Documentation and development files
+IMPROVEMENTS.md
+answer.md
+lastchat.txt
+last_fll_fetures.txt
+report.md
+tasks.md
+threads-test.log
+whatithink.md
+
+# Backup files
+tvs-threads-attempt.py.bak
+*.bak
+
+# Directories
+backup_stable/
+cookies/

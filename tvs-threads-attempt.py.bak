@@ -19,6 +19,13 @@ import time
 from pathlib import Path
 from datetime import datetime
 
+# Playwright import (optional - only used for Threads)
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -37,7 +44,7 @@ VIBE_MODEL = Path.home() / ".local/share/github.com.thewh1teagle.vibe/ggml-large
 COOKIES_DIR = SCRIPT_DIR / "cookies"
 SITE_COOKIES = {
     'instagram': COOKIES_DIR / "instagram" / "www.instagram.com_cookies.txt",
-    'threads': COOKIES_DIR / "threads" / "www.threads.net_cookies.txt",
+    'threads': COOKIES_DIR / "threads" / "www.threads.com_cookies.txt",  # Fixed: threads.com not threads.net
     'tiktok': COOKIES_DIR / "tiktok" / "www.tiktok.com_cookies.txt",
     'x': COOKIES_DIR / "x" / "x.com_cookies.txt",
     'youtube': COOKIES_DIR / "youtube" / "www.youtube.com_cookies.txt",
@@ -182,6 +189,206 @@ def run_command(cmd, cwd=None, timeout=600):
         return False, "", str(e)
 
 # ============================================================================
+# THREADS DOWNLOADER (HEADLESS BROWSER) - COMMENTED OUT
+# ============================================================================
+# NOTE: Threads detection blocks headless browsers. Code preserved for future use.
+# TODO: Investigate playwright-stealth or non-headless options
+# Status: Incomplete - Threads shows "trouble playing video" error
+# ============================================================================
+
+"""
+COMMENTED OUT - Threads headless browser code (lines 199-388)
+
+def convert_netscape_cookies_to_playwright(cookie_file):
+    cookies = []
+    try:
+        with open(cookie_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                # Skip comments and empty lines
+                if not line or line.startswith('#'):
+                    continue
+
+                parts = line.split('\t')
+                if len(parts) >= 7:
+                    cookie = {
+                        'name': parts[5],
+                        'value': parts[6],
+                        'domain': parts[0],
+                        'path': parts[2],
+                        'expires': int(parts[4]) if parts[4] != '0' else -1,
+                        'httpOnly': parts[1] == 'TRUE',
+                        'secure': parts[3] == 'TRUE',
+                        'sameSite': 'Lax'
+                    }
+                    cookies.append(cookie)
+    except Exception as e:
+        print_warning(f"Could not parse cookies: {e}")
+
+    return cookies
+
+def download_threads_with_browser(url, cookie_file, output_dir):
+    """
+    Download Threads video using headless browser.
+
+    Args:
+        url: Threads video URL
+        cookie_file: Path to cookies file
+        output_dir: Output directory
+
+    Returns:
+        tuple: (video_file_path, video_id) or (None, None)
+    """
+    if not PLAYWRIGHT_AVAILABLE:
+        print_error("Playwright not installed")
+        print_info("Install with: uv pip install --system playwright && playwright install chromium")
+        return None, None
+
+    print_info("Using headless browser to extract video URL...")
+
+    try:
+        with sync_playwright() as p:
+            # Launch browser with stealth options
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',  # Hide automation
+                ]
+            )
+
+            # Load cookies
+            cookies = convert_netscape_cookies_to_playwright(cookie_file)
+
+            # Create context with proper user agent
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1280, 'height': 720}
+            )
+            context.add_cookies(cookies)
+
+            page = context.new_page()
+
+            # Intercept video URLs from network requests
+            video_urls = []
+
+            def handle_response(response):
+                if '.mp4' in response.url and 'cdninstagram.com' in response.url:
+                    video_urls.append(response.url)
+                    print_info(f"Intercepted video URL from network")
+
+            page.on('response', handle_response)
+
+            # Navigate to Threads post
+            print_info(f"Loading: {url}")
+            page.goto(url, wait_until='domcontentloaded', timeout=30000)
+
+            # Wait a bit for React/JS to render
+            print_info("Waiting for page to fully load...")
+            page.wait_for_timeout(3000)  # 3 seconds
+
+            # Try to click video to trigger playback (this loads the URL)
+            try:
+                video_element = page.query_selector('video')
+                if video_element:
+                    print_info("Clicking video to trigger playback...")
+                    video_element.click()
+                    page.wait_for_timeout(2000)  # Wait for video to load
+            except Exception as e:
+                print_warning(f"Could not click video: {e}")
+
+            # Try multiple selectors
+            video_selector = 'video, video source, [data-testid*="video"]'
+
+            try:
+                page.wait_for_selector(video_selector, timeout=10000)
+            except:
+                # Save screenshot for debugging
+                screenshot_path = output_dir / "threads-debug.png"
+                page.screenshot(path=str(screenshot_path))
+                print_warning(f"Debug screenshot saved: {screenshot_path}")
+
+                print_error("No video element found on page")
+                browser.close()
+                return None, None
+
+            # Extract video URL (try multiple methods)
+            video_data = page.evaluate("""
+                () => {
+                    // Method 1: Direct video element
+                    const video = document.querySelector('video');
+                    if (video && (video.src || video.currentSrc)) {
+                        return {
+                            src: video.src || video.currentSrc,
+                            poster: video.poster
+                        };
+                    }
+
+                    // Method 2: Video source child
+                    const source = document.querySelector('video source');
+                    if (source && source.src) {
+                        return {
+                            src: source.src,
+                            poster: null
+                        };
+                    }
+
+                    return null;
+                }
+            """)
+
+            # Use intercepted URL if available
+            if video_urls:
+                print_success(f"Using intercepted video URL from network request")
+                if not video_data:
+                    video_data = {'src': video_urls[0], 'poster': None}
+
+            browser.close()
+
+            if not video_data or not video_data.get('src'):
+                print_error("Could not extract video URL from page")
+                return None, None
+
+            video_url = video_data['src']
+            print_success(f"Extracted video URL: {video_url[:80]}...")
+
+            # Extract video ID from URL for filename
+            import re
+            video_id_match = re.search(r'/post/([A-Za-z0-9_-]+)', url)
+            video_id = video_id_match.group(1) if video_id_match else 'unknown'
+
+            # Download video using curl with cookies
+            output_file = output_dir / f"{video_id}.mp4"
+
+            print_info("Downloading video...")
+            curl_cmd = [
+                'curl', '-L',
+                '--cookie', str(cookie_file),
+                '-A', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+                '-o', str(output_file),
+                video_url
+            ]
+
+            success, stdout, stderr = run_command(curl_cmd, timeout=300)
+
+            if success and output_file.exists():
+                file_size = output_file.stat().st_size / (1024**2)  # MB
+                print_success(f"Downloaded: {output_file.name}")
+                print_info(f"Size: {file_size:.1f} MB")
+                return output_file, video_id
+            else:
+                print_error("Download failed")
+                if output_file.exists():
+                    output_file.unlink()
+                return None, None
+
+    except Exception as e:
+        print_error(f"Headless browser error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
+"""
+
+# ============================================================================
 # VALIDATION FUNCTIONS
 # ============================================================================
 
@@ -266,6 +473,47 @@ def download_video(url, audio_only=False):
 
     site_dir = get_site_output_dir(site)
     print_info(f"Output directory: {site_dir}")
+
+    # Special handling for Threads (DISABLED - headless browser detection)
+    if site == 'threads':
+        print_error("Threads.com is not currently supported")
+        print_info("Threads/Meta blocks headless browser automation")
+        print_info("")
+        print_info("WORKAROUND:")
+        print_info("  1. Open video in browser")
+        print_info("  2. Right-click video → Inspect → Network tab")
+        print_info("  3. Play video and find .mp4 URL")
+        print_info("  4. Download manually: curl -O <video-url>")
+        print_info("  5. Then process: python tvs.py <downloaded-file>")
+        print_info("")
+        print_info("GitHub Issue: https://github.com/yt-dlp/yt-dlp/issues/7523")
+        return None, False, site
+
+    """
+    # COMMENTED OUT - Threads headless browser code (preserved for future)
+    if site == 'threads':
+        cookie_file = SITE_COOKIES.get(site)
+
+        # Fallback: Try Instagram cookies if Threads cookies not found (same company/infrastructure)
+        if not cookie_file or not cookie_file.exists():
+            instagram_cookies = SITE_COOKIES.get('instagram')
+            if instagram_cookies and instagram_cookies.exists():
+                print_info("Using Instagram cookies for Threads (same infrastructure)")
+                cookie_file = instagram_cookies
+            else:
+                print_error("Threads or Instagram cookies not found")
+                print_info(f"Expected Threads: {SITE_COOKIES.get('threads')}")
+                print_info(f"Expected Instagram: {instagram_cookies}")
+                return None, False, site
+
+        print_info("Threads requires headless browser extraction...")
+        video_file, video_id = download_threads_with_browser(url, cookie_file, site_dir)
+
+        if video_file:
+            return video_file, False, site  # False = not already existed
+        else:
+            return None, False, site
+    """
 
     # Get list of video/audio files before download
     video_extensions = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.m4a', '.opus'}

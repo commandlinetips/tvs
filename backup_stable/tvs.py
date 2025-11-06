@@ -23,28 +23,12 @@ from datetime import datetime
 # CONFIGURATION
 # ============================================================================
 
-# Get the directory where this script is located
-SCRIPT_DIR = Path(__file__).parent.resolve()
-
 # Directories
 VIDEOS_DIR = Path.home() / "Videos"
 WORK_DIR = Path.home() / "Work" / "Kai" / "video"
 
 # Vibe configuration
 VIBE_MODEL = Path.home() / ".local/share/github.com.thewh1teagle.vibe/ggml-large-v3-turbo.bin"
-
-# Cookies directory structure (organized by site)
-COOKIES_DIR = SCRIPT_DIR / "cookies"
-SITE_COOKIES = {
-    'instagram': COOKIES_DIR / "instagram" / "www.instagram.com_cookies.txt",
-    'threads': COOKIES_DIR / "threads" / "www.threads.net_cookies.txt",
-    'tiktok': COOKIES_DIR / "tiktok" / "www.tiktok.com_cookies.txt",
-    'x': COOKIES_DIR / "x" / "x.com_cookies.txt",
-    'youtube': COOKIES_DIR / "youtube" / "www.youtube.com_cookies.txt",
-}
-
-# Cookie expiration warning threshold (days)
-COOKIE_WARNING_DAYS = 30
 
 # Colors for terminal output
 class Colors:
@@ -61,66 +45,6 @@ class Colors:
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
-
-def detect_site(url):
-    """
-    Detect which site a URL is from.
-
-    Args:
-        url: Video URL
-
-    Returns:
-        str: Site name ('instagram', 'youtube', 'tiktok', 'threads', 'x', or 'other')
-    """
-    url_lower = url.lower()
-
-    if 'instagram.com' in url_lower:
-        return 'instagram'
-    elif 'threads.net' in url_lower or 'threads.com' in url_lower:
-        return 'threads'
-    elif 'tiktok.com' in url_lower:
-        return 'tiktok'
-    elif 'x.com' in url_lower or 'twitter.com' in url_lower:
-        return 'x'
-    elif 'youtube.com' in url_lower or 'youtu.be' in url_lower:
-        return 'youtube'
-    else:
-        return 'other'
-
-def get_site_output_dir(site):
-    """
-    Get the output directory for a specific site.
-
-    Args:
-        site: Site name
-
-    Returns:
-        Path: Site-specific subdirectory in VIDEOS_DIR
-    """
-    site_dir = VIDEOS_DIR / site
-    site_dir.mkdir(parents=True, exist_ok=True)
-    return site_dir
-
-def check_cookie_age(cookie_file):
-    """
-    Check if cookie file is older than warning threshold.
-
-    Args:
-        cookie_file: Path to cookie file
-
-    Returns:
-        tuple: (age_in_days, is_expired_warning)
-    """
-    if not cookie_file.exists():
-        return None, False
-
-    file_time = cookie_file.stat().st_mtime
-    age_seconds = time.time() - file_time
-    age_days = age_seconds / (24 * 3600)
-
-    is_old = age_days >= COOKIE_WARNING_DAYS
-
-    return int(age_days), is_old
 
 def print_header(text):
     """Print colored header."""
@@ -250,7 +174,7 @@ def download_video(url, audio_only=False):
         audio_only: If True, download only audio (much smaller)
 
     Returns:
-        tuple: (Path to video file or None, bool indicating if already existed, site name)
+        tuple: (Path to video file or None, bool indicating if already existed)
     """
     if audio_only:
         print_step(1, "Downloading audio only...")
@@ -260,42 +184,9 @@ def download_video(url, audio_only=False):
 
     print_info(f"URL: {url}")
 
-    # Detect site and get site-specific directory
-    site = detect_site(url)
-    print_info(f"Detected site: {site}")
-
-    site_dir = get_site_output_dir(site)
-    print_info(f"Output directory: {site_dir}")
-
     # Get list of video/audio files before download
     video_extensions = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.m4a', '.opus'}
-    videos_before = {f.name for f in site_dir.glob("*") if f.suffix.lower() in video_extensions}
-
-    # Determine filename pattern based on platform
-    # Instagram/Threads/TikTok: use ID + description (if available)
-    # YouTube: use title (more descriptive)
-    if site in ['instagram', 'threads', 'tiktok']:
-        # Try to get description/caption, fall back to ID
-        filename_pattern = "%(id)s.%(ext)s"
-    else:
-        filename_pattern = "%(title)s.%(ext)s"
-
-    # Check for site-specific cookies file
-    use_cookies = False
-    cookie_file = SITE_COOKIES.get(site)
-
-    if cookie_file and cookie_file.exists():
-        use_cookies = True
-        print_info(f"Using {site} cookies for authentication")
-
-        # Check cookie age and warn if old
-        age_days, is_old = check_cookie_age(cookie_file)
-        if is_old:
-            print_warning(f"Cookie file is {age_days} days old (threshold: {COOKIE_WARNING_DAYS} days)")
-            print_warning(f"⚠️  {Colors.FAIL}COOKIES MAY HAVE EXPIRED - CONSIDER UPDATING{Colors.ENDC}")
-            print_info(f"Cookie location: {cookie_file}")
-        else:
-            print_info(f"Cookie age: {age_days} days (OK)")
+    videos_before = {f.name for f in VIDEOS_DIR.glob("*") if f.suffix.lower() in video_extensions}
 
     if audio_only:
         # Download only audio (much smaller, faster)
@@ -305,46 +196,35 @@ def download_video(url, audio_only=False):
             "-f", "bestaudio/best",  # Audio only
             "-x",  # Extract audio
             "--audio-format", "best",  # Keep best audio format
-            "-o", filename_pattern,
+            "-o", "%(title)s.%(ext)s",
+            url
         ]
-        if use_cookies:
-            cmd.extend(["--cookies", str(cookie_file)])
-        cmd.append(url)
     else:
         # Download video with 480p max quality
         cmd = [
             "yt-dlp",
             "--restrict-filenames",
             "-f", "bestvideo[height<=480]+bestaudio/best[height<=480]/best",  # Max 480p to save space
-            "-o", filename_pattern,
+            "-o", "%(title)s.%(ext)s",
+            url
         ]
-        if use_cookies:
-            cmd.extend(["--cookies", str(cookie_file)])
-        cmd.append(url)
 
     start_time = time.time()
-    success, stdout, stderr = run_command(cmd, cwd=site_dir, timeout=1200)  # 20 min for large files
+    success, stdout, stderr = run_command(cmd, cwd=VIDEOS_DIR, timeout=1200)  # 20 min for large files
     elapsed = time.time() - start_time
 
     if not success:
         print_error("Download failed")
         print(f"Error: {stderr}")
+        return None, False
 
-        # Special error handling for unsupported sites
-        if site == 'threads' and 'Unsupported URL' in stderr:
-            print_warning("Threads is not yet supported by yt-dlp")
-            print_info("Threads support is in development. Check yt-dlp updates: yt-dlp -U")
-            print_info("Alternative: Download manually and use the transcript/summary features")
-
-        return None, False, site
-
-    # Find the most recently created VIDEO file in site directory
+    # Find the most recently created VIDEO file in Videos directory
     try:
-        video_files = [f for f in site_dir.glob("*") if f.suffix.lower() in video_extensions]
+        video_files = [f for f in VIDEOS_DIR.glob("*") if f.suffix.lower() in video_extensions]
 
         if not video_files:
             print_error("No video files found after download")
-            return None, False, site
+            return None, False
 
         # Sort by modification time and get the most recent
         video_file = sorted(video_files, key=lambda p: p.stat().st_mtime, reverse=True)[0]
@@ -362,11 +242,11 @@ def download_video(url, audio_only=False):
 
         print_info(f"Size: {file_size:.1f} MB")
 
-        return video_file, already_existed, site
+        return video_file, already_existed
 
     except Exception as e:
         print_error(f"Error finding downloaded file: {e}")
-        return None, False, site
+        return None, False
 
 def get_video_duration(video_file):
     """
@@ -393,7 +273,7 @@ def get_video_duration(video_file):
 
         duration_str = stdout.strip()
 
-        # Parse duration string (examples: "43 min 50 s", "1 h 23 min", "2 min 15 s", "55 s 915 ms")
+        # Parse duration string (examples: "43 min 50 s", "1 h 23 min", "2 min 15 s")
         total_minutes = 0
 
         # Extract hours
@@ -416,18 +296,6 @@ def get_video_duration(video_file):
             except (ValueError, IndexError):
                 pass
 
-        # Handle seconds-only videos (e.g., "55 s 915 ms")
-        # If no hours or minutes found, check for seconds and round up to 1 minute
-        if total_minutes == 0 and 's' in duration_str and 'min' not in duration_str:
-            try:
-                # Extract seconds (before " s")
-                seconds_part = duration_str.split('s')[0].strip()
-                seconds = int(seconds_part.split()[-1])
-                # Round up to at least 1 minute for short videos
-                total_minutes = max(1, (seconds + 59) // 60)  # Round up
-            except (ValueError, IndexError):
-                pass
-
         return total_minutes if total_minutes > 0 else None
 
     except Exception as e:
@@ -447,7 +315,6 @@ def transcribe_video(video_file, force=False):
     """
     print_step(2, "Transcribing video...")
     print_info(f"Video: {video_file.name}")
-    print_info(f"Location: {video_file.parent}")
 
     # Create transcript filename
     transcript_file = video_file.parent / f"{video_file.stem}-transcript.txt"
@@ -505,7 +372,7 @@ def transcribe_video(video_file, force=False):
     print_info("Using Whisper Large V3 Turbo model...")
 
     start_time = time.time()
-    success, stdout, stderr = run_command(cmd, cwd=video_file.parent, timeout=timeout)
+    success, stdout, stderr = run_command(cmd, cwd=VIDEOS_DIR, timeout=timeout)
     elapsed = time.time() - start_time
 
     if not success:
@@ -561,14 +428,13 @@ def copy_transcript(transcript_file):
         print_error(f"Copy failed: {e}")
         return None
 
-def generate_summary(transcript_file, video_file, site='other'):
+def generate_summary(transcript_file, video_file):
     """
     Generate summary from transcript using OpenCode agent.
 
     Args:
         transcript_file: Path to transcript file
         video_file: Path to original video file
-        site: Site name (for Instagram, adds smart naming + hashtags)
 
     Returns:
         Path: Path to summary file, or None on error
@@ -589,61 +455,18 @@ def generate_summary(transcript_file, video_file, site='other'):
         print_error("Transcript is empty")
         return None
 
-    # Expected summary file location (initial)
+    # Expected summary file location
     summary_file = WORK_DIR / f"{video_file.stem}-summarize.md"
 
-    # Check if summary already exists (skip regeneration)
-    if summary_file.exists():
-        file_size = summary_file.stat().st_size
-        if file_size > 100:  # At least 100 bytes (not empty)
-            print_success(f"Summary already exists: {summary_file.name}")
-            print_info(f"Size: {file_size} bytes")
-            print_info("Skipping summary generation (use -f flag to force regenerate)")
-            return summary_file
-
-    # Build prompt for OpenCode agent with special handling for Instagram
-    if site in ['instagram', 'threads', 'tiktok']:
-        # For social media with ID-based filenames, ask AI to generate smart title
-        prompt = f"""Analyze the video transcript and generate a comprehensive summary.
-
-Video ID: {video_file.stem}
-Video source: {site}
-Transcript location: {transcript_file}
-Output location: {summary_file}
-Transcript contains: {word_count} words
-
-IMPORTANT INSTRUCTIONS:
-1. Read the transcript file and analyze the content
-2. Create a comprehensive summary following your configured structure
-3. At the END of the summary, add a section called "## Metadata" with:
-   - Suggested filename: Create a SHORT descriptive filename (MAX 3-4 words, lowercase-with-hyphens) based on the main topic
-   - Keep it concise and memorable (e.g., "python-tutorial", "ai-basics", "unix-history")
-   - Hashtags: Generate 3-5 relevant hashtags for categorization (e.g., #ai #tutorial #productivity)
-   - Video ID: {video_file.stem}
-
-Format the metadata section exactly like this:
-```
-## Metadata
-**Suggested Filename:** short-topic-name
-**Hashtags:** #tag1 #tag2 #tag3
-**Video ID:** {video_file.stem}
-```
-
-CRITICAL: Filename MUST be 3-4 words maximum, all lowercase, separated by hyphens only.
-
-Save the summary to the specified output location."""
-    else:
-        # For YouTube, use regular summary (title is already good)
-        prompt = f"""Analyze the video transcript and generate a comprehensive summary.
+    # Build prompt for OpenCode agent
+    prompt = f"""Analyze the video transcript and generate a comprehensive summary.
 
 Video filename: {video_file.stem.replace('_', ' ')}
 Transcript location: {transcript_file}
 Output location: {summary_file}
 Transcript contains: {word_count} words
 
-Read the transcript file, perform deep analysis following your configured structure, and save the summary to the specified output location.
-
-At the END of the summary, add relevant hashtags for categorization (3-5 hashtags based on the content, e.g., #python #webdev #tutorial)."""
+Read the transcript file, perform deep analysis following your configured structure, and save the summary to the specified output location."""
 
     # Execute OpenCode agent
     cmd = [
@@ -670,47 +493,6 @@ At the END of the summary, add relevant hashtags for categorization (3-5 hashtag
     print_success(f"Summary created: {summary_file.name}")
     print_info(f"Size: {summary_size:.1f} KB")
 
-    # For Instagram/social media, optionally rename based on AI suggestion
-    if site in ['instagram', 'threads', 'tiktok']:
-        try:
-            with open(summary_file, 'r') as f:
-                summary_content = f.read()
-
-            # Look for suggested filename in metadata section
-            import re
-            filename_match = re.search(r'\*\*Suggested Filename:\*\*\s*([a-z0-9][a-z0-9-]*[a-z0-9])', summary_content, re.IGNORECASE)
-
-            if filename_match:
-                suggested_name = filename_match.group(1).lower().strip()
-
-                # Validate: limit to 4 words (3 hyphens max)
-                word_count = suggested_name.count('-') + 1
-                if word_count > 4:
-                    # Truncate to first 4 words
-                    parts = suggested_name.split('-')
-                    suggested_name = '-'.join(parts[:4])
-                    print_warning(f"Truncated long filename to: {suggested_name}")
-
-                # Validate: max 50 characters total
-                if len(suggested_name) > 50:
-                    suggested_name = suggested_name[:50].rstrip('-')
-                    print_warning(f"Truncated filename to 50 chars: {suggested_name}")
-
-                new_summary_file = WORK_DIR / f"{suggested_name}-{video_file.stem}-summarize.md"
-
-                # Rename if the suggestion is different
-                if new_summary_file != summary_file:
-                    summary_file.rename(new_summary_file)
-                    print_success(f"Renamed summary: {new_summary_file.name}")
-                    print_info(f"AI-generated filename based on content")
-                    summary_file = new_summary_file
-            else:
-                print_warning("Could not extract suggested filename from AI response")
-                print_info("Keeping original filename")
-        except Exception as e:
-            print_warning(f"Could not rename based on AI suggestion: {e}")
-            print_info("Keeping original filename")
-
     return summary_file
 
 # ============================================================================
@@ -733,7 +515,7 @@ def process_single_video(url, audio_only=False, force=False, download_only=False
     overall_start = time.time()
 
     # Step 1: Download
-    video_file, already_existed, site = download_video(url, audio_only=audio_only)
+    video_file, already_existed = download_video(url, audio_only=audio_only)
     if not video_file:
         print_error("Failed to download video")
         return False
@@ -760,8 +542,8 @@ def process_single_video(url, audio_only=False, force=False, download_only=False
         print_error("Failed to copy transcript")
         return False
 
-    # Step 4: Generate summary (with site info for smart naming)
-    summary_file = generate_summary(transcript_copy, video_file, site=site)
+    # Step 4: Generate summary
+    summary_file = generate_summary(transcript_copy, video_file)
     if not summary_file:
         print_error("Failed to generate summary")
         return False

@@ -1,0 +1,277 @@
+#!/bin/bash
+# Walker TVS Provider
+# Integrates TVS (Text-Video-Summarizer) with Walker launcher
+# Usage: Called automatically by Walker when user types #
+# Returns: JSON with Walker-compatible items
+
+set -euo pipefail
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+TVS_SCRIPT="/home/skull/tools/automation/tvs/tvs.py"
+PYTHON_CMD="python3.13"
+WORK_DIR="$HOME/Work/Kai/video"
+VIDEOS_DIR="$HOME/Videos"
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+
+# Send JSON to Walker
+send_json() {
+    echo "$1"
+    exit 0
+}
+
+# Check if string is a valid URL
+is_url() {
+    local url="$1"
+
+    # Basic URL check
+    if ! [[ "$url" =~ ^https?:// ]]; then
+        return 1
+    fi
+
+    # Check if it's a supported video platform
+    if [[ "$url" =~ (youtube\.com|youtu\.be|twitter\.com|x\.com|vimeo\.com|twitch\.tv|dailymotion\.com|reddit\.com) ]]; then
+        return 0
+    fi
+
+    # For other URLs, assume valid (yt-dlp supports many sites)
+    return 0
+}
+
+# Extract video ID from URL (for duplicate detection)
+extract_video_id() {
+    local url="$1"
+    # YouTube
+    if [[ "$url" =~ youtube\.com/watch\?v=([^&]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$url" =~ youtu\.be/([^?]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$url" =~ youtube\.com/shorts/([^?]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    # Twitter/X
+    elif [[ "$url" =~ (twitter\.com|x\.com)/.*/status/([0-9]+) ]]; then
+        echo "${BASH_REMATCH[2]}"
+    # Generic: use last path component
+    else
+        echo "$url" | rev | cut -d'/' -f1 | rev | cut -d'?' -f1 | sed 's/[^a-zA-Z0-9]/_/g'
+    fi
+}
+
+# Check if video already processed
+check_existing_summary() {
+    local url="$1"
+    local video_id
+    video_id=$(extract_video_id "$url")
+
+    # Search for existing summary
+    find "$WORK_DIR" -name "*${video_id}*-summarize.md" -o -name "*-summarize.md" 2>/dev/null | while read -r file; do
+        # Check if file content or name relates to our URL
+        if [[ "$file" =~ $video_id ]] || grep -q "$video_id" "$file" 2>/dev/null; then
+            echo "$file"
+            return 0
+        fi
+    done | head -1
+}
+
+# Escape JSON strings
+json_escape() {
+    local str="$1"
+    # Escape backslashes, quotes, and newlines
+    printf '%s' "$str" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' '
+}
+
+# ============================================================================
+# MAIN LOGIC
+# ============================================================================
+
+# Read query from Walker (stdin)
+read -r QUERY || QUERY=""
+
+# Remove leading # if present (Walker might pass it)
+QUERY="${QUERY#\#}"
+QUERY="${QUERY## }"  # Trim leading spaces
+
+# Case 1: Empty query - check clipboard first
+if [[ -z "$QUERY" ]]; then
+    # Try clipboard
+    CLIPBOARD=$(wl-paste 2>/dev/null || echo "")
+
+    if is_url "$CLIPBOARD"; then
+        # Found URL in clipboard, use it
+        QUERY="$CLIPBOARD"
+    else
+        # No URL in clipboard, show usage
+        send_json '{
+            "items": [
+                {
+                    "label": "📹 TVS - Text-Video-Summarizer",
+                    "sub": "Paste a video URL to process (YouTube, Twitter, etc.)",
+                    "exec": ""
+                },
+                {
+                    "label": "💡 Usage Examples",
+                    "sub": "Paste URL or type it directly",
+                    "exec": ""
+                },
+                {
+                    "label": "📋 Copy URL First",
+                    "sub": "Copy a video URL to clipboard first",
+                    "exec": ""
+                }
+            ]
+        }'
+    fi
+fi
+
+# Parse query for URL and flags
+FLAGS=""
+URL=""
+
+# Simple parser: everything that starts with - is a flag, rest is URL
+for word in $QUERY; do
+    if [[ "$word" =~ ^- ]]; then
+        FLAGS="$FLAGS $word"
+    else
+        URL="$word"
+    fi
+done
+
+# Case 2: No URL found - try clipboard
+if [[ -z "$URL" ]] || ! is_url "$URL"; then
+    # Check clipboard
+    CLIPBOARD=$(wl-paste 2>/dev/null || echo "")
+
+    if is_url "$CLIPBOARD"; then
+        URL="$CLIPBOARD"
+        URL_DISPLAY=$(json_escape "$URL")
+        send_json "{
+            \"items\": [
+                {
+                    \"label\": \"🎬 Full Video\",
+                    \"sub\": \"Complete processing with video\",
+                    \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -t; echo; echo Press Enter to close...; read'\"
+                },
+                {
+                    \"label\": \"🎵 Audio Processing\",
+                    \"sub\": \"Complete processing, audio only\",
+                    \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -a -t; echo; echo Press Enter to close...; read'\"
+                },
+                {
+                    \"label\": \"📥 Video Download\",
+                    \"sub\": \"Download video without processing\",
+                    \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -d -t; echo; echo Press Enter to close...; read'\"
+                },
+                {
+                    \"label\": \"📦 Audio Download\",
+                    \"sub\": \"Download audio without processing\",
+                    \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -a -d -t; echo; echo Press Enter to close...; read'\"
+                }
+            ]
+        }"
+    else
+        send_json '{
+            "items": [
+                {
+                    "label": "❌ Invalid Input",
+                    "sub": "No valid URL found in query or clipboard",
+                    "exec": ""
+                },
+                {
+                    "label": "💡 How to Use",
+                    "sub": "Copy a video URL first, then open Walker and type #",
+                    "exec": ""
+                },
+                {
+                    "label": "📺 Supported Sites",
+                    "sub": "YouTube, Twitter/X, Vimeo, Twitch, Reddit, and more",
+                    "exec": ""
+                }
+            ]
+        }'
+    fi
+fi
+
+# Case 3: Valid URL found - show processing options
+
+URL_DISPLAY=$(json_escape "$URL")
+
+# Check for existing summary (duplicate detection)
+EXISTING_SUMMARY=$(check_existing_summary "$URL")
+
+# Build JSON response
+if [[ -n "$EXISTING_SUMMARY" ]]; then
+    # Summary exists - offer to open or reprocess
+    SUMMARY_NAME=$(basename "$EXISTING_SUMMARY")
+    SUMMARY_NAME_ESC=$(json_escape "$SUMMARY_NAME")
+
+    send_json "{
+        \"items\": [
+            {
+                \"label\": \"⚠️  Already Processed\",
+                \"sub\": \"This video was processed before\",
+                \"exec\": \"\"
+            },
+            {
+                \"label\": \"📖 Open Existing Summary\",
+                \"sub\": \"$SUMMARY_NAME_ESC\",
+                \"exec\": \"marktext \\\"$EXISTING_SUMMARY\\\"\"
+            },
+            {
+                \"label\": \"🔄 Reprocess Video\",
+                \"sub\": \"Force re-transcription and new summary\",
+                \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -a -t -f; echo; echo Press Enter to close...; read'\"
+            },
+            {
+                \"label\": \"📥 Re-download Only\",
+                \"sub\": \"Download again without processing\",
+                \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -d -a -t; echo; echo Press Enter to close...; read'\"
+            }
+        ]
+    }"
+else
+    # New video - show standard options
+
+    # If flags already provided, execute directly
+    if [[ -n "$FLAGS" ]]; then
+        send_json "{
+            \"items\": [
+                {
+                    \"label\": \"⚡ Processing with flags: $FLAGS\",
+                    \"sub\": \"$URL_DISPLAY\",
+                    \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -a -t $FLAGS; echo; echo Press Enter to close...; read'\"
+                }
+            ]
+        }"
+    fi
+
+    # Show interactive options
+    send_json "{
+        \"items\": [
+            {
+                \"label\": \"🎬 Full Video\",
+                \"sub\": \"Complete processing with video\",
+                \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -t; echo; echo Press Enter to close...; read'\"
+            },
+            {
+                \"label\": \"🎵 Audio Processing\",
+                \"sub\": \"Complete processing, audio only\",
+                \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -a -t; echo; echo Press Enter to close...; read'\"
+            },
+            {
+                \"label\": \"📥 Video Download\",
+                \"sub\": \"Download video without processing\",
+                \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -d -t; echo; echo Press Enter to close...; read'\"
+            },
+            {
+                \"label\": \"📦 Audio Download\",
+                \"sub\": \"Download audio without processing\",
+                \"exec\": \"alacritty -e bash -c '$PYTHON_CMD $TVS_SCRIPT -u \\\"$URL\\\" -a -d -t; echo; echo Press Enter to close...; read'\"
+            }
+        ]
+    }"
+fi

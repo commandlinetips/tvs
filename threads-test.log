@@ -1,0 +1,25 @@
+
+[95m[1m============================================================[0m
+[95m[1mTVS - Text-Video-Summarizer[0m
+[95m[1m============================================================[0m
+
+[96mℹ️  Started at: 2025-11-05 18:54:16[0m
+[94m[1m[Step 0][0m Validating environment...
+[92m✅ yt-dlp found[0m
+[92m✅ vibe found[0m
+[92m✅ mediainfo found[0m
+[92m✅ Vibe model found (1.5 GB)[0m
+[92m✅ Videos directory: /home/skull/Videos[0m
+[92m✅ Work directory: /home/skull/Work/Kai/video[0m
+[92m✅ Environment validation passed[0m
+[96mℹ️  Mode: Single video[0m
+[96mℹ️  Quality: 480p max (balanced)[0m
+[94m[1m[Step 1][0m Downloading video...
+[96mℹ️  URL: https://www.threads.com/@raphaelerba/post/DQmlC1ZjLWr?xmt=AQF0a5bGPqeyFXlN8s3ndzq0THhZoqXKsK0zFRC-SlhMvA[0m
+[96mℹ️  Detected site: threads[0m
+[96mℹ️  Output directory: /home/skull/Videos/threads[0m
+[96mℹ️  Threads requires headless browser extraction...[0m
+[96mℹ️  Using headless browser to extract video URL...[0m
+[96mℹ️  Loading: https://www.threads.com/@raphaelerba/post/DQmlC1ZjLWr?xmt=AQF0a5bGPqeyFXlN8s3ndzq0THhZoqXKsK0zFRC-SlhMvA[0m
+[91m❌ No video element found on page[0m
+[91m❌ Failed to download video[0m
