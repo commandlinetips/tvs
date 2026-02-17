@@ -157,16 +157,26 @@ python3.13 tvs.py -u "https://vedio link.com/s" -a -t
 
 ## Output Files
 
-Every processed video creates:
+Every processed video creates organized output by platform:
 
 ```
 ~/Videos/
-└── Video_Title_Here.m4a          # Audio file (if -a used)
-└── Video_Title_Here-transcript.txt
+├── instagram/                    # Instagram videos
+│   ├── C_ABC123.m4a             # Audio file (ID-based)
+│   └── C_ABC123-transcript.txt
+├── youtube/                      # YouTube videos
+│   ├── Video_Title_Here.m4a
+│   └── Video_Title_Here-transcript.txt
+├── tiktok/                       # TikTok videos
+├── threads/                      # Threads videos (manual download)
+├── x/                            # X/Twitter videos
+└── other/                        # Other platforms
 
 ~/Work/Kai/video/
-├── Video_Title_Here-transcript.txt    # Backup
-└── Video_Title_Here-summarize.md      # Summary ⭐
+├── Video_Title_Here-transcript.txt         # Backup (YouTube)
+├── Video_Title_Here-summarize.md           # Summary with hashtags ⭐
+├── python-tutorial-C_ABC123-transcript.txt # Instagram backup
+└── python-tutorial-C_ABC123-summarize.md   # AI-named summary ⭐
 ```
 
 ## Examples with Your Video
@@ -287,9 +297,128 @@ python3.13 tvs.py --help
 - Extracts key themes, quotes, and actionable insights
 - No more template-based summaries!
 
+## New Features in v3.1 (November 2025)
+
+### Multi-Site Support 🌐
+
+- **Site-specific directories:** Videos auto-organized by platform
+- **Smart cookie management:** Organized cookies by site in `cookies/` folder
+- **Cookie age warnings:** Red alert when cookies ≥30 days old
+- **Supported platforms:** Instagram, YouTube, TikTok, X (Twitter), Threads
+
+### AI Smart Naming for Social Media 🎯
+
+- **Instagram/TikTok/Threads:** AI analyzes content and generates descriptive filenames
+  - Example: `C_XYZ123.m4a` → `python-tutorial-C_XYZ123-summarize.md`
+- **YouTube:** Keeps original title-based naming (already descriptive)
+- **Filename validation:** Max 3-4 words, prevents overly long names
+- **Video ID preserved:** Original ID kept in filename for tracking
+
+### Automatic Hashtag Generation 🏷️
+
+- **All summaries:** 3-5 relevant hashtags added automatically
+- **Content-based:** Generated from actual video analysis, not just titles
+- **Future-ready:** Foundation for search/categorization features
+
+### Platform-Specific Features
+
+| Platform  | Directory    | Naming Style        | Hashtags | Status |
+|-----------|--------------|---------------------|----------|--------|
+| YouTube   | `~/Videos/youtube/` | Title-based | End of summary | ✅ Working |
+| Instagram | `~/Videos/instagram/` | AI + Video ID | Metadata section | ✅ Working |
+| TikTok    | `~/Videos/tiktok/` | AI + Video ID | Metadata section | ✅ Working |
+| X/Twitter | `~/Videos/x/` | Title-based | End of summary | ✅ Working |
+| Threads   | `~/Videos/threads/` | AI + Video ID | Metadata section | ❌ Not supported by yt-dlp yet |
+
+### Known Limitations
+
+**Threads Support:**
+- yt-dlp (version 2025.10.22) doesn't have Threads extractor yet
+- Cookies are properly configured, but yt-dlp can't process Threads URLs
+- **Workaround:** Download videos manually and place in `~/Videos/threads/`
+- TVS can still transcribe and summarize manually downloaded Threads videos
+- Check for yt-dlp updates: `yt-dlp -U`
+
+## Cookie Management
+
+### Setting Up Cookies
+
+1. **Export cookies from browser** using extension (e.g., "Get cookies.txt LOCALLY")
+2. **Place in correct directory:**
+   ```bash
+   # Instagram
+   ~/tools/automation/tvs/cookies/instagram/www.instagram.com_cookies.txt
+
+   # TikTok
+   ~/tools/automation/tvs/cookies/tiktok/www.tiktok.com_cookies.txt
+
+   # X (Twitter)
+   ~/tools/automation/tvs/cookies/x/x.com_cookies.txt
+
+   # YouTube (optional, most videos don't need authentication)
+   ~/tools/automation/tvs/cookies/youtube/www.youtube.com_cookies.txt
+   ```
+
+3. **Update cookies when you see warning:**
+   ```
+   ⚠️  Cookie file is 32 days old (threshold: 30 days)
+   ⚠️  COOKIES MAY HAVE EXPIRED - CONSIDER UPDATING
+   ```
+
+### Cookie Expiration
+
+- Most cookies expire after ~30 days
+- TVS warns you when cookies are ≥30 days old
+- Update cookies by re-exporting from browser
+- Shows cookie location for easy updating
+
+## Examples by Platform
+
+### Instagram Video
+```bash
+python3.13 tvs.py -u "https://instagram.com/reel/C_XYZ123" -a -t
+
+# Output:
+# - Video: ~/Videos/instagram/C_XYZ123.m4a
+# - Summary: ~/Work/Kai/video/python-tutorial-C_XYZ123-summarize.md
+# - Hashtags in metadata section
+# - AI-generated descriptive filename
+```
+
+### TikTok Video
+```bash
+python3.13 tvs.py -u "https://www.tiktok.com/@user/video/123" -a -t
+
+# Output:
+# - Video: ~/Videos/tiktok/7123456789.m4a
+# - Summary: ~/Work/Kai/video/cooking-tips-7123456789-summarize.md
+# - AI smart naming based on content
+```
+
+### X (Twitter) Video
+```bash
+python3.13 tvs.py -u "https://x.com/user/status/123456789" -a -t
+
+# Output:
+# - Video: ~/Videos/x/username_status_123.m4a
+# - Summary: ~/Work/Kai/video/username_status_123-summarize.md
+# - Hashtags at end of summary
+```
+
+### YouTube Video (Unchanged)
+```bash
+python3.13 tvs.py -u "https://youtube.com/watch?v=dQw4w9WgXcQ" -a -t
+
+# Output:
+# - Video: ~/Videos/youtube/Rick_Astley_Never_Gonna_Give_You_Up.m4a
+# - Summary: ~/Work/Kai/video/Rick_Astley_Never_Gonna_Give_You_Up-summarize.md
+# - Title-based naming preserved
+# - Hashtags at end of summary
+```
+
 ---
 
 **Created:** 2025-10-31
-**Updated:** 2025-10-31
+**Updated:** 2025-11-06
 **Author:** skullthoughts
-**Tool:** TVS v3.0
+**Tool:** TVS v3.1

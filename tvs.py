@@ -16,6 +16,7 @@ import subprocess
 import sys
 import os
 import time
+import logging
 from pathlib import Path
 from datetime import datetime
 
@@ -29,6 +30,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # Directories
 VIDEOS_DIR = Path.home() / "Videos"
 WORK_DIR = Path.home() / "Work" / "Kai" / "video"
+LOG_DIR = SCRIPT_DIR / "logs"
 
 # Vibe configuration
 VIBE_MODEL = Path.home() / ".local/share/github.com.thewh1teagle.vibe/ggml-large-v3-turbo.bin"
@@ -61,6 +63,58 @@ class Colors:
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
+
+def setup_logging():
+    """
+    Set up dual logging system:
+    1. Debug log - Complete tool execution (all operations, errors, debug info)
+    2. Processed files log - Clean history of successfully processed files
+    """
+    # Create logs directory
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Generate log filenames with format: debug-DD-M-YYYY.log and processed-DD-M-YYYY.log
+    now = datetime.now()
+    date_suffix = f"{now.day}-{now.month}-{now.year}"
+    debug_log_file = LOG_DIR / f"debug-{date_suffix}.log"
+    processed_log_file = LOG_DIR / f"processed-{date_suffix}.log"
+
+    # Clear any existing handlers
+    logger = logging.getLogger()
+    logger.handlers.clear()
+    logger.setLevel(logging.DEBUG)
+
+    # 1. DEBUG LOG - Verbose logging of all operations
+    debug_handler = logging.FileHandler(debug_log_file, mode='a', encoding='utf-8')
+    debug_handler.setLevel(logging.DEBUG)
+    debug_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    debug_handler.setFormatter(debug_formatter)
+    logger.addHandler(debug_handler)
+
+    # 2. PROCESSED FILES LOG - Clean summary handler (only for file processing results)
+    # We'll use this separately via a custom logger
+    processed_handler = logging.FileHandler(processed_log_file, mode='a', encoding='utf-8')
+    processed_handler.setLevel(logging.INFO)
+    processed_formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    processed_handler.setFormatter(processed_formatter)
+
+    # Create separate logger for processed files
+    processed_logger = logging.getLogger('processed')
+    processed_logger.handlers.clear()
+    processed_logger.setLevel(logging.INFO)
+    processed_logger.addHandler(processed_handler)
+    processed_logger.propagate = False  # Don't propagate to root logger
+
+    # Log session start in both logs
+    logging.info("="*60)
+    logging.info("TVS SESSION STARTED")
+    logging.info("="*60)
+
+    processed_logger.info("="*60)
+    processed_logger.info("SESSION START")
+    processed_logger.info("="*60)
+
+    return debug_log_file, processed_log_file
 
 def detect_site(url):
     """
@@ -188,53 +242,72 @@ def run_command(cmd, cwd=None, timeout=600):
 def validate_environment():
     """Validate that all required tools and paths exist."""
     print_step(0, "Validating environment...")
+    logging.info("Starting environment validation")
 
     errors = []
 
     # Check yt-dlp
+    logging.debug("Checking for yt-dlp...")
     success, _, _ = run_command("yt-dlp --version")
     if not success:
         errors.append("yt-dlp not found. Install with: sudo pacman -S yt-dlp")
+        logging.error("yt-dlp not found")
     else:
         print_success("yt-dlp found")
+        logging.info("yt-dlp found")
 
     # Check vibe
+    logging.debug("Checking for vibe...")
     success, _, _ = run_command("vibe --help")
     if not success:
         errors.append("vibe not found. Install with: yay -S vibe-bin")
+        logging.error("vibe not found")
     else:
         print_success("vibe found")
+        logging.info("vibe found")
 
     # Check mediainfo (optional but recommended)
+    logging.debug("Checking for mediainfo...")
     success, _, _ = run_command("mediainfo --version")
     if not success:
         print_warning("mediainfo not found (optional). Install with: sudo pacman -S mediainfo")
         print_info("Without mediainfo, timeout estimation for long videos may be inaccurate")
+        logging.warning("mediainfo not found (optional)")
     else:
         print_success("mediainfo found")
+        logging.info("mediainfo found")
 
     # Check vibe model
+    logging.debug(f"Checking for vibe model at {VIBE_MODEL}...")
     if not VIBE_MODEL.exists():
         errors.append(f"Vibe model not found at: {VIBE_MODEL}")
         errors.append("Run vibe GUI once to download the model")
+        logging.error(f"Vibe model not found at {VIBE_MODEL}")
     else:
         model_size = VIBE_MODEL.stat().st_size / (1024**3)  # GB
         print_success(f"Vibe model found ({model_size:.1f} GB)")
+        logging.info(f"Vibe model found ({model_size:.1f} GB) at {VIBE_MODEL}")
 
     # Check directories
+    logging.debug(f"Creating directories: {VIDEOS_DIR}, {WORK_DIR}")
     VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
     print_success(f"Videos directory: {VIDEOS_DIR}")
+    logging.info(f"Videos directory: {VIDEOS_DIR}")
 
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     print_success(f"Work directory: {WORK_DIR}")
+    logging.info(f"Work directory: {WORK_DIR}")
 
     if errors:
         print_error("Environment validation failed:")
         for error in errors:
             print(f"  • {error}")
+            logging.error(f"Validation error: {error}")
+        logging.error("Environment validation FAILED")
         return False
 
     print_success("Environment validation passed")
+    logging.info("Environment validation PASSED")
     return True
 
 # ============================================================================
@@ -252,6 +325,8 @@ def download_video(url, audio_only=False):
     Returns:
         tuple: (Path to video file or None, bool indicating if already existed, site name)
     """
+    logging.info(f"[DOWNLOAD] Starting download - URL: {url}, audio_only: {audio_only}")
+
     if audio_only:
         print_step(1, "Downloading audio only...")
         print_info("Mode: Audio-only (faster, smaller file)")
@@ -263,6 +338,7 @@ def download_video(url, audio_only=False):
     # Detect site and get site-specific directory
     site = detect_site(url)
     print_info(f"Detected site: {site}")
+    logging.debug(f"[DOWNLOAD] Detected site: {site}")
 
     site_dir = get_site_output_dir(site)
     print_info(f"Output directory: {site_dir}")
@@ -323,18 +399,21 @@ def download_video(url, audio_only=False):
         cmd.append(url)
 
     start_time = time.time()
+    logging.debug(f"[DOWNLOAD] Running yt-dlp with timeout=1200s")
     success, stdout, stderr = run_command(cmd, cwd=site_dir, timeout=1200)  # 20 min for large files
     elapsed = time.time() - start_time
 
     if not success:
         print_error("Download failed")
         print(f"Error: {stderr}")
+        logging.error(f"[DOWNLOAD] Failed after {elapsed:.1f}s - Error: {stderr[:200]}")
 
         # Special error handling for unsupported sites
         if site == 'threads' and 'Unsupported URL' in stderr:
             print_warning("Threads is not yet supported by yt-dlp")
             print_info("Threads support is in development. Check yt-dlp updates: yt-dlp -U")
             print_info("Alternative: Download manually and use the transcript/summary features")
+            logging.warning(f"[DOWNLOAD] Unsupported site: {site}")
 
         return None, False, site
 
@@ -356,9 +435,11 @@ def download_video(url, audio_only=False):
         if already_existed:
             print_warning(f"Video already exists: {video_file.name}")
             print_info("Skipping download (file already present)")
+            logging.info(f"[DOWNLOAD] Skipped (already exists): {video_file.resolve()}")
         else:
             print_success(f"Downloaded: {video_file.name}")
             print_info(f"Time: {elapsed:.1f}s")
+            logging.info(f"[DOWNLOAD] Success in {elapsed:.1f}s: {video_file.resolve()} ({file_size:.1f} MB)")
 
         print_info(f"Size: {file_size:.1f} MB")
 
@@ -366,6 +447,7 @@ def download_video(url, audio_only=False):
 
     except Exception as e:
         print_error(f"Error finding downloaded file: {e}")
+        logging.error(f"[DOWNLOAD] Exception: {e}")
         return None, False, site
 
 def get_video_duration(video_file):
@@ -445,6 +527,8 @@ def transcribe_video(video_file, force=False):
     Returns:
         Path: Path to transcript file, or None on error
     """
+    logging.info(f"[TRANSCRIBE] Starting transcription - Video: {video_file.resolve()}, force: {force}")
+
     print_step(2, "Transcribing video...")
     print_info(f"Video: {video_file.name}")
     print_info(f"Location: {video_file.parent}")
@@ -465,6 +549,7 @@ def transcribe_video(video_file, force=False):
 
         print_info(f"Size: {transcript_size} bytes")
         print_info(f"Words: {word_count}")
+        logging.info(f"[TRANSCRIBE] Skipped (already exists): {transcript_file.resolve()} ({word_count} words)")
 
         return transcript_file
 
@@ -503,6 +588,7 @@ def transcribe_video(video_file, force=False):
     ]
 
     print_info("Using Whisper Large V3 Turbo model...")
+    logging.debug(f"[TRANSCRIBE] Running vibe with timeout={timeout}s")
 
     start_time = time.time()
     success, stdout, stderr = run_command(cmd, cwd=video_file.parent, timeout=timeout)
@@ -511,6 +597,7 @@ def transcribe_video(video_file, force=False):
     if not success:
         print_error("Transcription failed")
         print(f"Error: {stderr}")
+        logging.error(f"[TRANSCRIBE] Failed after {elapsed:.1f}s - Error: {stderr[:200]}")
         print_warning("Troubleshooting:")
         print("  1. Verify model exists:")
         print(f"     ls -lh {VIBE_MODEL}")
@@ -521,6 +608,7 @@ def transcribe_video(video_file, force=False):
 
     if not transcript_file.exists():
         print_error("Transcript file not created")
+        logging.error(f"[TRANSCRIBE] Transcript file not created: {transcript_file}")
         return None
 
     # Get transcript info
@@ -533,6 +621,7 @@ def transcribe_video(video_file, force=False):
     print_info(f"Size: {transcript_size} bytes")
     print_info(f"Words: {word_count}")
     print_info(f"Time: {elapsed:.1f}s")
+    logging.info(f"[TRANSCRIBE] Success in {elapsed:.1f}s: {transcript_file.resolve()} ({word_count} words)")
 
     return transcript_file
 
@@ -546,6 +635,7 @@ def copy_transcript(transcript_file):
     Returns:
         Path: Path to copied transcript, or None on error
     """
+    logging.info(f"[COPY] Copying transcript to work directory")
     print_step(3, "Copying transcript...")
 
     dest_file = WORK_DIR / transcript_file.name
@@ -555,10 +645,12 @@ def copy_transcript(transcript_file):
         shutil.copy2(transcript_file, dest_file)
 
         print_success(f"Copied to: {dest_file}")
+        logging.info(f"[COPY] Success: {dest_file.resolve()}")
         return dest_file
 
     except Exception as e:
         print_error(f"Copy failed: {e}")
+        logging.error(f"[COPY] Failed: {e}")
         return None
 
 def generate_summary(transcript_file, video_file, site='other'):
@@ -573,6 +665,7 @@ def generate_summary(transcript_file, video_file, site='other'):
     Returns:
         Path: Path to summary file, or None on error
     """
+    logging.info(f"[SUMMARY] Starting AI summary generation for: {video_file.stem}")
     print_step(4, "Generating summary with AI analysis...")
     print_info("Using OpenCode transcript-analyzer agent...")
 
@@ -599,6 +692,7 @@ def generate_summary(transcript_file, video_file, site='other'):
             print_success(f"Summary already exists: {summary_file.name}")
             print_info(f"Size: {file_size} bytes")
             print_info("Skipping summary generation (use -f flag to force regenerate)")
+            logging.info(f"[SUMMARY] Skipped (already exists): {summary_file.resolve()}")
             return summary_file
 
     # Build prompt for OpenCode agent with special handling for Instagram
@@ -653,22 +747,28 @@ At the END of the summary, add relevant hashtags for categorization (3-5 hashtag
     ]
 
     print_info("Running AI analysis (this may take 30-60 seconds)...")
+    logging.debug(f"[SUMMARY] Running OpenCode agent with timeout=600s")
+    start_time = time.time()
     success, stdout, stderr = run_command(cmd, cwd=WORK_DIR, timeout=600)  # 10 min timeout
+    elapsed = time.time() - start_time
 
     if not success:
         print_error("Failed to generate summary with OpenCode agent")
         if stderr:
             print_error(f"Error: {stderr[:500]}")  # Show first 500 chars
+        logging.error(f"[SUMMARY] Failed after {elapsed:.1f}s - Error: {stderr[:200]}")
         return None
 
     # Verify summary file was created
     if not summary_file.exists():
         print_error(f"Summary file not created: {summary_file}")
+        logging.error(f"[SUMMARY] Summary file not created: {summary_file}")
         return None
 
     summary_size = summary_file.stat().st_size / 1024  # KB
     print_success(f"Summary created: {summary_file.name}")
     print_info(f"Size: {summary_size:.1f} KB")
+    logging.info(f"[SUMMARY] Success in {elapsed:.1f}s: {summary_file.resolve()} ({summary_size:.1f} KB)")
 
     # For Instagram/social media, optionally rename based on AI suggestion
     if site in ['instagram', 'threads', 'tiktok']:
@@ -733,9 +833,11 @@ def process_single_video(url, audio_only=False, force=False, download_only=False
     overall_start = time.time()
 
     # Step 1: Download
+    logging.info(f"Processing URL: {url}")
     video_file, already_existed, site = download_video(url, audio_only=audio_only)
     if not video_file:
         print_error("Failed to download video")
+        logging.error(f"Download failed for: {url}")
         return False
 
     # If download-only mode, stop here
@@ -746,6 +848,11 @@ def process_single_video(url, audio_only=False, force=False, download_only=False
         print_info(f"Total time: {overall_elapsed:.1f}s")
         print(f"\n{Colors.BOLD}Output:{Colors.ENDC}")
         print(f"  📹 Video: {video_file}")
+
+        # Log downloaded file
+        logging.info(f"Downloaded (audio-only={audio_only}): {video_file.resolve()}")
+        logging.info(f"Processing time: {overall_elapsed:.1f}s")
+
         return True
 
     # Step 2: Transcribe
@@ -777,6 +884,23 @@ def process_single_video(url, audio_only=False, force=False, download_only=False
     print(f"  📹 Video:      {video_file}")
     print(f"  📝 Transcript: {transcript_copy}")
     print(f"  📊 Summary:    {summary_file}")
+
+    # Log all processed files with full paths (DEBUG LOG)
+    logging.info(f"Processing completed successfully for: {url}")
+    logging.info(f"  Video (audio-only={audio_only}): {video_file.resolve()}")
+    logging.info(f"  Transcript: {transcript_copy.resolve()}")
+    logging.info(f"  Summary: {summary_file.resolve()}")
+    logging.info(f"  Total processing time: {overall_elapsed:.1f}s")
+    logging.info("-" * 60)
+
+    # Log to PROCESSED FILES LOG (clean file history)
+    processed_logger = logging.getLogger('processed')
+    processed_logger.info(f"URL: {url}")
+    processed_logger.info(f"  📹 Video: {video_file.resolve()}")
+    processed_logger.info(f"  📝 Transcript: {transcript_copy.resolve()}")
+    processed_logger.info(f"  📊 Summary: {summary_file.resolve()}")
+    processed_logger.info(f"  ⏱️  Time: {overall_elapsed:.1f}s")
+    processed_logger.info("-" * 80)
 
     return True
 
@@ -846,9 +970,14 @@ Notes:
         sys.stdout.reconfigure(line_buffering=True)
         sys.stderr.reconfigure(line_buffering=True)
 
+    # Setup logging
+    debug_log, processed_log = setup_logging()
+
     # Print header
     print_header("TVS - Text-Video-Summarizer")
     print_info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print_info(f"Debug log: {debug_log}")
+    print_info(f"Processed files log: {processed_log}")
 
     # Validate environment
     if not validate_environment():
@@ -868,8 +997,12 @@ Notes:
 
         if success:
             print(f"\n{Colors.OKGREEN}{Colors.BOLD}✨ Summary is ready! ✨{Colors.ENDC}")
+            logging.info("Session completed successfully")
+            logging.info("="*60)
             return 0
         else:
+            logging.error("Session failed")
+            logging.info("="*60)
             return 1
 
     elif args.list:
@@ -912,12 +1045,15 @@ Notes:
             print(f"{Colors.BOLD}Processing {idx}/{len(urls)} (line {line_num}){Colors.ENDC}")
             print(f"{Colors.BOLD}{'─'*60}{Colors.ENDC}\n")
 
+            logging.info(f"Starting batch video {idx}/{len(urls)}: {url}")
+
             success = process_single_video(url, audio_only=args.audio_only, force=args.force, download_only=args.download_only)
 
             if success:
                 results['success'] += 1
             else:
                 results['failed'] += 1
+                logging.warning(f"Failed to process video {idx}/{len(urls)}: {url}")
                 print_warning("Continuing with next video...")
 
         # Print batch summary
@@ -932,6 +1068,15 @@ Notes:
 
         if results['success'] > 0:
             print(f"\n{Colors.OKGREEN}{Colors.BOLD}✨ {results['success']} video(s) processed successfully! ✨{Colors.ENDC}")
+
+        # Log batch processing summary
+        logging.info("="*60)
+        logging.info("BATCH PROCESSING SUMMARY")
+        logging.info(f"Total videos: {len(urls)}")
+        logging.info(f"Successful: {results['success']}")
+        logging.info(f"Failed: {results['failed']}")
+        logging.info(f"Total time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
+        logging.info("="*60)
 
         # Return 0 if at least one succeeded
         return 0 if results['success'] > 0 else 1
