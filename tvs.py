@@ -27,13 +27,15 @@ from datetime import datetime
 # Get the directory where this script is located
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
-# Directories
-VIDEOS_DIR = Path.home() / "Videos"
-WORK_DIR = Path.home() / "Work" / "Kai" / "video"
+# Directories (relative to script directory)
+VIDEOS_DIR = SCRIPT_DIR / "videos"
+WORK_DIR = SCRIPT_DIR / "transcripts"
 LOG_DIR = SCRIPT_DIR / "logs"
 
-# Vibe configuration
-VIBE_MODEL = Path.home() / ".local/share/github.com.thewh1teagle.vibe/ggml-large-v3-turbo.bin"
+# Parakeet transcription configuration
+PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
+CONDA_PATH = "/opt/homebrew/bin/conda"
+CONDA_ENV = "nemo"
 
 # Cookies directory structure (organized by site)
 COOKIES_DIR = SCRIPT_DIR / "cookies"
@@ -202,7 +204,7 @@ def print_info(text):
     """Print info message."""
     print(f"{Colors.OKCYAN}ℹ️  {text}{Colors.ENDC}", flush=True)
 
-def run_command(cmd, cwd=None, timeout=600):
+def run_command(cmd, cwd=None, timeout=600, shell=False):
     """
     Run shell command and return output.
 
@@ -210,12 +212,13 @@ def run_command(cmd, cwd=None, timeout=600):
         cmd: Command as list or string
         cwd: Working directory
         timeout: Timeout in seconds
+        shell: Run command through shell (needed for conda activation)
 
     Returns:
         tuple: (success, stdout, stderr)
     """
     try:
-        if isinstance(cmd, str):
+        if isinstance(cmd, str) and not shell:
             cmd = cmd.split()
 
         result = subprocess.run(
@@ -224,7 +227,9 @@ def run_command(cmd, cwd=None, timeout=600):
             capture_output=True,
             text=True,
             timeout=timeout,
-            check=False
+            check=False,
+            shell=shell,
+            executable='/bin/zsh' if shell else None
         )
 
         success = result.returncode == 0
@@ -250,43 +255,53 @@ def validate_environment():
     logging.debug("Checking for yt-dlp...")
     success, _, _ = run_command("yt-dlp --version")
     if not success:
-        errors.append("yt-dlp not found. Install with: sudo pacman -S yt-dlp")
+        errors.append("yt-dlp not found. Install with: brew install yt-dlp")
         logging.error("yt-dlp not found")
     else:
         print_success("yt-dlp found")
         logging.info("yt-dlp found")
 
-    # Check vibe
-    logging.debug("Checking for vibe...")
-    success, _, _ = run_command("vibe --help")
+    # Check ffmpeg (needed for audio conversion)
+    logging.debug("Checking for ffmpeg...")
+    success, _, _ = run_command("ffmpeg -version")
     if not success:
-        errors.append("vibe not found. Install with: yay -S vibe-bin")
-        logging.error("vibe not found")
+        errors.append("ffmpeg not found. Install with: brew install ffmpeg")
+        logging.error("ffmpeg not found")
     else:
-        print_success("vibe found")
-        logging.info("vibe found")
+        print_success("ffmpeg found")
+        logging.info("ffmpeg found")
+
+    # Check conda
+    logging.debug("Checking for conda...")
+    if not Path(CONDA_PATH).exists():
+        errors.append(f"conda not found at: {CONDA_PATH}")
+        errors.append("Install miniforge: brew install --cask miniforge")
+        logging.error(f"conda not found at {CONDA_PATH}")
+    else:
+        print_success(f"conda found ({CONDA_PATH})")
+        logging.info(f"conda found at {CONDA_PATH}")
+
+    # Check nemo conda environment
+    logging.debug(f"Checking for conda env '{CONDA_ENV}'...")
+    success, _, _ = run_command(f"{CONDA_PATH} env list | grep -q '^{CONDA_ENV} '", shell=True)
+    if not success:
+        errors.append(f"Conda environment '{CONDA_ENV}' not found")
+        errors.append(f"Create it with: conda create -n {CONDA_ENV} python=3.11 && conda activate {CONDA_ENV} && pip install 'nemo_toolkit[asr]'")
+        logging.error(f"Conda env '{CONDA_ENV}' not found")
+    else:
+        print_success(f"Conda env '{CONDA_ENV}' found")
+        logging.info(f"Conda env '{CONDA_ENV}' found")
 
     # Check mediainfo (optional but recommended)
     logging.debug("Checking for mediainfo...")
     success, _, _ = run_command("mediainfo --version")
     if not success:
-        print_warning("mediainfo not found (optional). Install with: sudo pacman -S mediainfo")
+        print_warning("mediainfo not found (optional). Install with: brew install mediainfo")
         print_info("Without mediainfo, timeout estimation for long videos may be inaccurate")
         logging.warning("mediainfo not found (optional)")
     else:
         print_success("mediainfo found")
         logging.info("mediainfo found")
-
-    # Check vibe model
-    logging.debug(f"Checking for vibe model at {VIBE_MODEL}...")
-    if not VIBE_MODEL.exists():
-        errors.append(f"Vibe model not found at: {VIBE_MODEL}")
-        errors.append("Run vibe GUI once to download the model")
-        logging.error(f"Vibe model not found at {VIBE_MODEL}")
-    else:
-        model_size = VIBE_MODEL.stat().st_size / (1024**3)  # GB
-        print_success(f"Vibe model found ({model_size:.1f} GB)")
-        logging.info(f"Vibe model found ({model_size:.1f} GB) at {VIBE_MODEL}")
 
     # Check directories
     logging.debug(f"Creating directories: {VIDEOS_DIR}, {WORK_DIR}")
@@ -516,9 +531,70 @@ def get_video_duration(video_file):
         print_warning(f"Could not determine video duration: {e}")
         return None
 
+def convert_audio_for_parakeet(video_file):
+    """
+    Convert audio to mono 16kHz WAV for parakeet model.
+
+    Parakeet requires:
+    - Mono channel (not stereo)
+    - 16kHz sample rate
+    - WAV format preferred
+
+    Args:
+        video_file: Path to video/audio file
+
+    Returns:
+        Path: Path to converted WAV file, or None on error
+    """
+    logging.info(f"[CONVERT] Converting audio for parakeet: {video_file.name}")
+
+    # Create converted filename
+    converted_file = video_file.parent / f"{video_file.stem}_mono16k.wav"
+
+    # Check if already converted
+    if converted_file.exists():
+        print_info(f"Using existing converted audio: {converted_file.name}")
+        logging.info(f"[CONVERT] Using existing: {converted_file}")
+        return converted_file
+
+    print_info("Converting audio to mono 16kHz WAV for parakeet...")
+
+    # Use ffmpeg to convert: mono, 16kHz, 16-bit PCM WAV
+    cmd = [
+        "ffmpeg",
+        "-i", str(video_file),
+        "-ac", "1",           # Mono
+        "-ar", "16000",       # 16kHz
+        "-acodec", "pcm_s16le",  # 16-bit PCM
+        "-y",                 # Overwrite
+        str(converted_file)
+    ]
+
+    start_time = time.time()
+    success, stdout, stderr = run_command(cmd, timeout=300)
+
+    if not success:
+        print_error(f"Audio conversion failed: {stderr[:200]}")
+        logging.error(f"[CONVERT] Failed: {stderr[:200]}")
+        return None
+
+    elapsed = time.time() - start_time
+    file_size = converted_file.stat().st_size / (1024**2)  # MB
+
+    print_success(f"Converted: {converted_file.name}")
+    print_info(f"Size: {file_size:.1f} MB")
+    print_info(f"Time: {elapsed:.1f}s")
+    logging.info(f"[CONVERT] Success in {elapsed:.1f}s: {converted_file} ({file_size:.1f} MB)")
+
+    return converted_file
+
 def transcribe_video(video_file, force=False):
     """
-    Transcribe video using vibe.
+    Transcribe video using parakeet-tdt-0.6b-v3 (NVIDIA NeMo).
+
+    Requires:
+    - conda environment 'nemo' with nemo_toolkit installed
+    - ffmpeg for audio conversion
 
     Args:
         video_file: Path to video file
@@ -527,7 +603,7 @@ def transcribe_video(video_file, force=False):
     Returns:
         Path: Path to transcript file, or None on error
     """
-    logging.info(f"[TRANSCRIBE] Starting transcription - Video: {video_file.resolve()}, force: {force}")
+    logging.info(f"[TRANSCRIBE] Starting - Video: {video_file.resolve()}, force: {force}")
 
     print_step(2, "Transcribing video...")
     print_info(f"Video: {video_file.name}")
@@ -541,7 +617,6 @@ def transcribe_video(video_file, force=False):
         print_warning(f"Transcript already exists: {transcript_file.name}")
         print_info("Skipping transcription (file already present)")
 
-        # Get transcript info
         transcript_size = transcript_file.stat().st_size
         with open(transcript_file, 'r') as f:
             transcript_text = f.read()
@@ -553,69 +628,112 @@ def transcribe_video(video_file, force=False):
 
         return transcript_file
 
-    # Get video duration to calculate appropriate timeout
-    duration_minutes = get_video_duration(video_file)
+    # Convert audio to mono 16kHz WAV
+    converted_audio = convert_audio_for_parakeet(video_file)
+    if not converted_audio:
+        print_error("Failed to convert audio for parakeet")
+        return None
 
-    # Calculate dynamic timeout based on duration
+    # Create Python script to run transcription in conda env
+    # Write to a temp file to avoid shell quote issues
+    import tempfile
+    audio_path = str(converted_audio.resolve())
+
+    transcription_script = f'''
+import nemo.collections.asr as nemo_asr
+import sys
+import time
+
+# Suppress verbose logging
+import logging
+logging.getLogger('nemo_logger').setLevel(logging.ERROR)
+
+audio_file = r"{audio_path}"
+
+print("Loading parakeet model...", file=sys.stderr)
+start = time.time()
+
+try:
+    asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name="{PARAKEET_MODEL}")
+    load_time = time.time() - start
+    print(f"Model loaded in {{load_time:.1f}}s", file=sys.stderr)
+
+    print("Transcribing...", file=sys.stderr)
+    start = time.time()
+    output = asr_model.transcribe([audio_file])
+    transcribe_time = time.time() - start
+
+    print(f"Transcription completed in {{transcribe_time:.1f}}s", file=sys.stderr)
+
+    # Output transcript to stdout
+    if output and len(output) > 0:
+        print(output[0].text)
+    else:
+        print("ERROR: No transcription output", file=sys.stderr)
+        sys.exit(1)
+
+except Exception as e:
+    print(f"ERROR: {{e}}", file=sys.stderr)
+    sys.exit(1)
+'''
+
+    # Write script to temp file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        f.write(transcription_script)
+        script_path = f.name
+
+    # Build command to run in conda environment
+    conda_activate = f'eval "$({CONDA_PATH} shell.zsh hook)" && conda activate {CONDA_ENV}'
+    cmd = f'{conda_activate} && python3 {script_path}'
+
+    print_info(f"Using parakeet-tdt-0.6b-v3 model...")
+    logging.debug(f"[TRANSCRIBE] Running in conda env '{CONDA_ENV}'")
+
+    # Get video duration for timeout
+    duration_minutes = get_video_duration(video_file)
     if duration_minutes:
         print_info(f"Duration: {duration_minutes} minutes")
-
-        # Calculate timeout: base rule is ~2x duration + buffer
-        if duration_minutes < 30:
-            timeout = 1200  # 20 minutes
-        elif duration_minutes < 60:
-            timeout = 2400  # 40 minutes
-        elif duration_minutes < 120:
-            timeout = 4800  # 80 minutes
-        else:
-            timeout = 7200  # 2 hours
-            print_warning(f"Long video detected ({duration_minutes} min). This may take a while...")
-
-        print_info(f"Transcription timeout: {timeout//60} minutes")
+        # Parakeet is faster, but still needs reasonable timeout
+        timeout = max(300, duration_minutes * 60)  # At least 5 min
     else:
-        # Fallback to default timeout if duration unknown
-        timeout = 2400  # 40 minutes default
-        print_warning("Could not determine video duration, using default timeout")
+        timeout = 1200  # 20 minutes default
 
-    # ⚠️ CRITICAL: Use vibe ONLY - NO ffmpeg or other tools
-    cmd = [
-        "vibe",
-        "--model", str(VIBE_MODEL),
-        "--file", video_file.name,
-        "--write", transcript_file.name,
-        "--format", "txt",
-        "--language", "auto"
-    ]
-
-    print_info("Using Whisper Large V3 Turbo model...")
-    logging.debug(f"[TRANSCRIBE] Running vibe with timeout={timeout}s")
+    print_info(f"Transcription timeout: {timeout//60} minutes")
 
     start_time = time.time()
-    success, stdout, stderr = run_command(cmd, cwd=video_file.parent, timeout=timeout)
+    success, stdout, stderr = run_command(cmd, shell=True, timeout=timeout)
     elapsed = time.time() - start_time
 
-    if not success:
+    # Clean up temp script file
+    try:
+        os.unlink(script_path)
+    except:
+        pass
+
+    if not success or not stdout.strip():
         print_error("Transcription failed")
-        print(f"Error: {stderr}")
-        logging.error(f"[TRANSCRIBE] Failed after {elapsed:.1f}s - Error: {stderr[:200]}")
+        if stderr:
+            print(f"Error: {stderr[-500:]}")  # Show last 500 chars
+        logging.error(f"[TRANSCRIBE] Failed after {elapsed:.1f}s")
         print_warning("Troubleshooting:")
-        print("  1. Verify model exists:")
-        print(f"     ls -lh {VIBE_MODEL}")
+        print(f"  1. Ensure conda env '{CONDA_ENV}' exists with nemo_toolkit")
+        print(f"     conda activate {CONDA_ENV} && python -c 'import nemo.collections.asr'")
         print("  2. Check video has audio:")
-        print(f"     ffprobe -v error -select_streams a:0 -show_entries stream=codec_name {video_file}")
-        print("  3. Try running vibe GUI first")
+        print(f"     ffprobe -v error -select_streams a:0 {video_file}")
         return None
 
-    if not transcript_file.exists():
-        print_error("Transcript file not created")
-        logging.error(f"[TRANSCRIBE] Transcript file not created: {transcript_file}")
+    # Write transcript to file
+    transcript_text = stdout.strip()
+    if not transcript_text:
+        print_error("Transcription produced empty output")
+        logging.error(f"[TRANSCRIBE] Empty transcript")
         return None
+
+    transcript_file.write_text(transcript_text, encoding="utf-8")
 
     # Get transcript info
     transcript_size = transcript_file.stat().st_size
-    with open(transcript_file, 'r') as f:
-        transcript_text = f.read()
-        word_count = len(transcript_text.split())
+    word_count = len(transcript_text.split())
 
     print_success(f"Transcribed: {transcript_file.name}")
     print_info(f"Size: {transcript_size} bytes")
@@ -912,18 +1030,16 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Single video
-  python3.13 tvs.py -u https://youtube.com/watch?v=dQw4w9WgXcQ
-  python3.13 tvs.py --url https://youtube.com/shorts/8YULk160fIw
+  # Single video (recommended)
+  python3.13 tvs.py -u https://youtube.com/watch?v=dQw4w9WgXcQ -a -t
 
   # Batch processing from file
-  python3.13 tvs.py --list urls.txt
+  python3.13 tvs.py --list urls.txt -a -t
 
 Notes:
-  - Requires: yt-dlp, vibe
-  - Vibe model must be downloaded (run vibe GUI once)
-  - Videos saved to: ~/Videos/
-  - Transcripts/summaries saved to: ~/Work/Kai/video/
+  - Transcription: parakeet-tdt-0.6b-v3 (NVIDIA NeMo, requires conda env 'nemo')
+  - Videos saved to: <repo>/videos/
+  - Transcripts/summaries saved to: <repo>/transcripts/
   - URL list file format: one URL per line, blank lines and # comments ignored
         """
     )
