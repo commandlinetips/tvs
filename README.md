@@ -70,14 +70,17 @@ python3.13 tvs.py --list urls.txt -a -t
 
 ### Command Flags
 
-| Flag | Long Form      | Description                                  |
-|------|----------------|----------------------------------------------|
-| `-u` | `--url`        | Single video URL                             |
-| `-l` | `--list`       | URL list file                                |
-| `-a` | `--audio-only` | Download audio only (10x faster, smaller)    |
-| `-t` | `--terminal`   | Show live output (no buffering)              |
-| `-f` | `--force`      | Force re-transcription (skip existing check) |
-| `-h` | `--help`       | Show help message                            |
+| Flag | Long Form         | Description                                        |
+|------|-------------------|----------------------------------------------------|
+| `-u` | `--url`           | Single video URL                                   |
+| `-l` | `--list`          | URL list file                                      |
+| `-p` | `--playlist`      | YouTube playlist or channel URL                    |
+| `-a` | `--audio-only`    | Download audio only (10x faster, smaller)          |
+| `-t` | `--terminal`      | Show live output (no buffering)                    |
+| `-f` | `--force`         | Force re-transcription (skip existing check)       |
+| `-d` | `--download-only` | Download only, skip transcription and summary      |
+| `-h` | `--help`          | Show help message                                  |
+|      | `--playlist-items`| Select specific items from playlist (e.g. `1-10`) |
 
 ### Examples
 
@@ -109,6 +112,21 @@ python3.13 tvs.py --list urls.txt -a -t
 # When transcript is corrupted or you want fresh transcription
 python3.13 tvs.py -u "VIDEO_URL" -a -t -f
 ```
+
+**Playlist Processing:**
+```bash
+# Download and process all videos in a playlist
+python3.13 tvs.py -p "https://youtube.com/playlist?list=PLxxxxxx" -a -t
+
+# Download playlist videos only (no transcription or summary)
+python3.13 tvs.py -p "https://youtube.com/playlist?list=PLxxxxxx" -a -d
+
+# Download specific items from a playlist
+python3.13 tvs.py -p "https://youtube.com/playlist?list=PLxxxxxx" --playlist-items 1-10 -a -d
+```
+
+> **Note:** Already-downloaded videos are automatically skipped using a download archive
+> (`~/Videos/.yt-dlp-archive.txt`). Re-running the same playlist is safe and fast.
 
 ### URL List File Format
 
@@ -353,6 +371,24 @@ timeout=900  # Transcription timeout: 15 minutes
 ```
 
 ## Troubleshooting
+
+### vibe GTK Error: "cannot open display"
+
+**Symptom:** Transcription fails immediately with:
+```
+(vibe:XXXXX): Gtk-WARNING **: cannot open display:
+```
+
+**Cause:** vibe uses GTK internally even in CLI mode and requires `DISPLAY` to be set.
+
+**Fix:** Already handled automatically in tvs.py — the script sets `DISPLAY=:0` before
+calling vibe if the variable is missing. If it still fails, verify XWayland is running:
+```bash
+echo $DISPLAY          # Should be :0 or :1
+ls /tmp/.X11-unix/     # Shows available X displays
+```
+
+---
 
 ### Model Not Found
 

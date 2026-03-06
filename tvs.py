@@ -30,6 +30,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 # Directories
 VIDEOS_DIR = Path.home() / "Videos"
 WORK_DIR = Path.home() / "Work" / "Kai" / "video"
+DOWNLOAD_ARCHIVE = VIDEOS_DIR / ".yt-dlp-archive.txt"
 LOG_DIR = SCRIPT_DIR / "logs"
 
 # Vibe configuration
@@ -202,7 +203,7 @@ def print_info(text):
     """Print info message."""
     print(f"{Colors.OKCYAN}ℹ️  {text}{Colors.ENDC}", flush=True)
 
-def run_command(cmd, cwd=None, timeout=600):
+def run_command(cmd, cwd=None, timeout=600, env=None):
     """
     Run shell command and return output.
 
@@ -210,6 +211,7 @@ def run_command(cmd, cwd=None, timeout=600):
         cmd: Command as list or string
         cwd: Working directory
         timeout: Timeout in seconds
+        env: Optional environment dict (defaults to current environment)
 
     Returns:
         tuple: (success, stdout, stderr)
@@ -224,7 +226,8 @@ def run_command(cmd, cwd=None, timeout=600):
             capture_output=True,
             text=True,
             timeout=timeout,
-            check=False
+            check=False,
+            env=env
         )
 
         success = result.returncode == 0
@@ -239,7 +242,7 @@ def run_command(cmd, cwd=None, timeout=600):
 # VALIDATION FUNCTIONS
 # ============================================================================
 
-def validate_environment():
+def validate_environment(download_only=False):
     """Validate that all required tools and paths exist."""
     print_step(0, "Validating environment...")
     logging.info("Starting environment validation")
@@ -256,15 +259,16 @@ def validate_environment():
         print_success("yt-dlp found")
         logging.info("yt-dlp found")
 
-    # Check vibe
-    logging.debug("Checking for vibe...")
-    success, _, _ = run_command("vibe --help")
-    if not success:
-        errors.append("vibe not found. Install with: yay -S vibe-bin")
-        logging.error("vibe not found")
-    else:
-        print_success("vibe found")
-        logging.info("vibe found")
+    # Check vibe (skip if download-only mode)
+    if not download_only:
+        logging.debug("Checking for vibe...")
+        success, _, _ = run_command("which vibe")
+        if not success:
+            errors.append("vibe not found. Install with: yay -S vibe-bin")
+            logging.error("vibe not found")
+        else:
+            print_success("vibe found")
+            logging.info("vibe found")
 
     # Check mediainfo (optional but recommended)
     logging.debug("Checking for mediainfo...")
@@ -277,16 +281,17 @@ def validate_environment():
         print_success("mediainfo found")
         logging.info("mediainfo found")
 
-    # Check vibe model
-    logging.debug(f"Checking for vibe model at {VIBE_MODEL}...")
-    if not VIBE_MODEL.exists():
-        errors.append(f"Vibe model not found at: {VIBE_MODEL}")
-        errors.append("Run vibe GUI once to download the model")
-        logging.error(f"Vibe model not found at {VIBE_MODEL}")
-    else:
-        model_size = VIBE_MODEL.stat().st_size / (1024**3)  # GB
-        print_success(f"Vibe model found ({model_size:.1f} GB)")
-        logging.info(f"Vibe model found ({model_size:.1f} GB) at {VIBE_MODEL}")
+    # Check vibe model (skip if download-only mode)
+    if not download_only:
+        logging.debug(f"Checking for vibe model at {VIBE_MODEL}...")
+        if not VIBE_MODEL.exists():
+            errors.append(f"Vibe model not found at: {VIBE_MODEL}")
+            errors.append("Run vibe GUI once to download the model")
+            logging.error(f"Vibe model not found at {VIBE_MODEL}")
+        else:
+            model_size = VIBE_MODEL.stat().st_size / (1024**3)  # GB
+            print_success(f"Vibe model found ({model_size:.1f} GB)")
+            logging.info(f"Vibe model found ({model_size:.1f} GB) at {VIBE_MODEL}")
 
     # Check directories
     logging.debug(f"Creating directories: {VIDEOS_DIR}, {WORK_DIR}")
@@ -378,11 +383,15 @@ def download_video(url, audio_only=False):
         cmd = [
             "yt-dlp",
             "--restrict-filenames",
+            "--download-archive", str(DOWNLOAD_ARCHIVE),
             "-f", "bestaudio/best",  # Audio only
             "-x",  # Extract audio
             "--audio-format", "best",  # Keep best audio format
             "-o", filename_pattern,
         ]
+        if site == 'youtube':
+            # Android client bypasses SABR streaming / 403 errors
+            cmd.extend(["--extractor-args", "youtube:player_client=android,web"])
         if use_cookies:
             cmd.extend(["--cookies", str(cookie_file)])
         cmd.append(url)
@@ -391,9 +400,13 @@ def download_video(url, audio_only=False):
         cmd = [
             "yt-dlp",
             "--restrict-filenames",
+            "--download-archive", str(DOWNLOAD_ARCHIVE),
             "-f", "bestvideo[height<=480]+bestaudio/best[height<=480]/best",  # Max 480p to save space
             "-o", filename_pattern,
         ]
+        if site == 'youtube':
+            # Android client bypasses SABR streaming / 403 errors
+            cmd.extend(["--extractor-args", "youtube:player_client=android,web"])
         if use_cookies:
             cmd.extend(["--cookies", str(cookie_file)])
         cmd.append(url)
@@ -590,8 +603,16 @@ def transcribe_video(video_file, force=False):
     print_info("Using Whisper Large V3 Turbo model...")
     logging.debug(f"[TRANSCRIBE] Running vibe with timeout={timeout}s")
 
+    # vibe is a GTK app and needs DISPLAY even in CLI mode.
+    # Always set DISPLAY=:0 if not already set — without it vibe fails with
+    # "Gtk-WARNING: cannot open display" even when called from the terminal.
+    vibe_env = os.environ.copy()
+    if not vibe_env.get('DISPLAY'):
+        vibe_env['DISPLAY'] = ':0'
+        logging.debug("[TRANSCRIBE] DISPLAY not set — forcing DISPLAY=:0 for vibe")
+
     start_time = time.time()
-    success, stdout, stderr = run_command(cmd, cwd=video_file.parent, timeout=timeout)
+    success, stdout, stderr = run_command(cmd, cwd=video_file.parent, timeout=timeout, env=vibe_env)
     elapsed = time.time() - start_time
 
     if not success:
@@ -817,6 +838,65 @@ At the END of the summary, add relevant hashtags for categorization (3-5 hashtag
 # MAIN FUNCTION
 # ============================================================================
 
+def get_playlist_urls(playlist_url, playlist_items=None):
+    """
+    Extract individual video URLs from a YouTube playlist or channel.
+
+    Args:
+        playlist_url: YouTube playlist or channel URL
+        playlist_items: Optional item range/selection string (e.g. '1-10', '1,3,5')
+
+    Returns:
+        list: List of video URLs, or empty list on failure
+    """
+    logging.info(f"[PLAYLIST] Fetching URLs from: {playlist_url}")
+    print_step(0, "Fetching playlist URLs...")
+    print_info(f"Playlist: {playlist_url}")
+
+    cmd = [
+        "yt-dlp",
+        "--flat-playlist",
+        "--print", "url",
+        "--no-warnings",
+        "--extractor-args", "youtube:player_client=android,web",
+    ]
+
+    if playlist_items:
+        cmd.extend(["--playlist-items", playlist_items])
+        print_info(f"Selecting items: {playlist_items}")
+
+    # Use YouTube cookies if available
+    cookie_file = SITE_COOKIES.get('youtube')
+    if cookie_file and cookie_file.exists():
+        cmd.extend(["--cookies", str(cookie_file)])
+        age_days, is_old = check_cookie_age(cookie_file)
+        if is_old:
+            print_warning(f"YouTube cookie file is {age_days} days old — consider updating")
+
+    cmd.append(playlist_url)
+
+    logging.debug(f"[PLAYLIST] Running yt-dlp flat-playlist with timeout=120s")
+    success, stdout, stderr = run_command(cmd, timeout=120)
+
+    if not success:
+        print_error(f"Failed to fetch playlist")
+        print(f"Error: {stderr[:300]}")
+        logging.error(f"[PLAYLIST] Failed: {stderr[:200]}")
+        return []
+
+    urls = [line.strip() for line in stdout.splitlines()
+            if line.strip() and line.strip().startswith('http')]
+
+    if not urls:
+        print_error("No video URLs found in playlist")
+        logging.error("[PLAYLIST] No URLs extracted from playlist output")
+        return []
+
+    print_success(f"Found {len(urls)} video(s) in playlist")
+    logging.info(f"[PLAYLIST] Extracted {len(urls)} URLs")
+    return urls
+
+
 def process_single_video(url, audio_only=False, force=False, download_only=False):
     """
     Process a single video URL.
@@ -908,58 +988,155 @@ def process_single_video(url, audio_only=False, force=False, download_only=False
 def main():
     """Main execution function."""
     parser = argparse.ArgumentParser(
-        description="TVS - Text-Video-Summarizer: Download, transcribe, and summarize videos",
+        description=(
+            "TVS - Text-Video-Summarizer\n"
+            "Automatically downloads a video or audio from a URL, transcribes\n"
+            "the speech using Whisper AI (via vibe), and generates a structured\n"
+            "markdown summary using an OpenCode AI agent.\n\n"
+            "Supported sites: YouTube, Instagram, TikTok, X/Twitter, Threads\n"
+            "Output:  ~/Videos/<site>/<file>          — downloaded media\n"
+            "         ~/Work/Kai/video/<file>-transcript.txt  — transcript\n"
+            "         ~/Work/Kai/video/<file>-summarize.md    — AI summary"
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Single video
-  python3.13 tvs.py -u https://youtube.com/watch?v=dQw4w9WgXcQ
-  python3.13 tvs.py --url https://youtube.com/shorts/8YULk160fIw
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EXAMPLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  # Batch processing from file
-  python3.13 tvs.py --list urls.txt
+  Single video (recommended flags: -a for audio-only, -t for live output):
+    python3.13 tvs.py -u "https://youtube.com/watch?v=dQw4w9WgXcQ" -a -t
 
-Notes:
-  - Requires: yt-dlp, vibe
-  - Vibe model must be downloaded (run vibe GUI once)
-  - Videos saved to: ~/Videos/
-  - Transcripts/summaries saved to: ~/Work/Kai/video/
-  - URL list file format: one URL per line, blank lines and # comments ignored
+  YouTube Shorts:
+    python3.13 tvs.py -u "https://youtube.com/shorts/8YULk160fIw" -a -t
+
+  Batch from file (one URL per line, # lines are comments):
+    python3.13 tvs.py -l urls.txt -a -t
+
+  Full playlist:
+    python3.13 tvs.py -p "https://youtube.com/playlist?list=PLxxxxxx" -a -t
+
+  Channel videos tab:
+    python3.13 tvs.py -p "https://youtube.com/@channelname/videos" -a -t
+
+  Playlist, first 10 videos only:
+    python3.13 tvs.py -p "https://youtube.com/playlist?list=PLxxxxxx" --playlist-items 1-10 -a -t
+
+  Download video file only, skip transcription and summary:
+    python3.13 tvs.py -u "https://youtube.com/watch?v=dQw4w9WgXcQ" -d
+
+  Force re-transcribe (overwrite existing transcript):
+    python3.13 tvs.py -u "https://youtube.com/watch?v=dQw4w9WgXcQ" -a -t -f
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REQUIREMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  yt-dlp     — video downloader       (sudo pacman -S yt-dlp)
+  vibe       — Whisper transcription  (yay -S vibe-bin)
+  opencode   — AI summary agent       (must have transcript-analyzer agent configured)
+  model      — Whisper Large V3 Turbo (run vibe GUI once to download, ~1.5 GB)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+URL LIST FILE FORMAT  (used with -l/--list)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  https://youtube.com/watch?v=abc123
+  # this line is a comment and will be skipped
+  https://youtube.com/watch?v=def456
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PLAYLIST ITEM SELECTION  (used with --playlist-items)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1-10       first 10 videos
+  1,3,5      videos 1, 3 and 5 only
+  2-5,8      videos 2 through 5, plus video 8
         """
     )
 
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         '-u', '--url',
-        help='Single video URL (YouTube, etc.)'
+        metavar='URL',
+        help=(
+            'Process a single video URL. Supports YouTube, YouTube Shorts, '
+            'Instagram, TikTok, X/Twitter, and Threads. '
+            'The full pipeline runs: download → transcribe → copy → summarize.'
+        )
     )
     group.add_argument(
         '-l', '--list',
-        help='Text file containing list of URLs (one per line)'
+        metavar='FILE',
+        help=(
+            'Process multiple URLs from a text file (one URL per line). '
+            'Blank lines and lines starting with # are ignored. '
+            'Each video goes through the full pipeline. Failed videos are '
+            'skipped and processing continues with the next URL.'
+        )
+    )
+    group.add_argument(
+        '-p', '--playlist',
+        metavar='URL',
+        help=(
+            'Process all videos from a YouTube playlist or channel. '
+            'Accepts playlist URLs (youtube.com/playlist?list=...) and '
+            'channel URLs (youtube.com/@name/videos). '
+            'Use --playlist-items to select a subset of videos.'
+        )
     )
 
     parser.add_argument(
         '-a', '--audio-only',
         action='store_true',
-        help='Download audio only (smaller file size, faster download)'
+        help=(
+            'Download audio only instead of video. '
+            'The file is ~10x smaller and downloads much faster. '
+            'Transcription quality is identical since vibe only uses the audio track. '
+            'Strongly recommended for all use cases.'
+        )
     )
 
     parser.add_argument(
         '-t', '--terminal',
         action='store_true',
-        help='Show live output in terminal (no buffering, real-time updates)'
+        help=(
+            'Print output in real time (unbuffered). '
+            'Without this flag, output may appear in large chunks due to Python buffering. '
+            'Use this when running interactively so you can see live progress.'
+        )
     )
 
     parser.add_argument(
         '-f', '--force',
         action='store_true',
-        help='Force re-transcription even if transcript already exists'
+        help=(
+            'Force re-transcription even if a transcript file already exists. '
+            'By default TVS skips transcription when it detects an existing transcript '
+            'to avoid wasting time. Use -f to overwrite it (e.g. after a failed or '
+            'incomplete transcription run).'
+        )
     )
 
     parser.add_argument(
         '-d', '--download-only',
         action='store_true',
-        help='Download video only (skip transcription and summary)'
+        help=(
+            'Download the media file and then stop — skip transcription and summary. '
+            'Useful when you only need the raw video/audio file, or want to '
+            'inspect the file before committing to the full pipeline.'
+        )
+    )
+
+    parser.add_argument(
+        '--playlist-items',
+        metavar='ITEMS',
+        help=(
+            'Select specific videos from a playlist (only used with -p/--playlist). '
+            'Accepts yt-dlp item syntax: a range ("1-10"), a comma-separated list '
+            '("1,3,5"), or a combination ("2-5,8"). '
+            'Item numbers are 1-based and follow playlist order.'
+        )
     )
 
     args = parser.parse_args()
@@ -980,7 +1157,7 @@ Notes:
     print_info(f"Processed files log: {processed_log}")
 
     # Validate environment
-    if not validate_environment():
+    if not validate_environment(download_only=args.download_only):
         print_error("Environment validation failed. Please fix the issues above.")
         return 1
 
@@ -1079,6 +1256,75 @@ Notes:
         logging.info("="*60)
 
         # Return 0 if at least one succeeded
+        return 0 if results['success'] > 0 else 1
+
+    elif args.playlist:
+        # Playlist mode
+        print_info("Mode: Playlist")
+        print_info(f"Playlist URL: {args.playlist}")
+        if args.playlist_items:
+            print_info(f"Items: {args.playlist_items}")
+        if args.audio_only:
+            print_info("Quality: Audio-only (fast, small file)")
+        else:
+            print_info("Quality: 480p max (balanced)")
+
+        # Fetch all URLs from the playlist
+        urls = get_playlist_urls(args.playlist, playlist_items=args.playlist_items)
+        if not urls:
+            print_error("No videos found in playlist. Check the URL and try again.")
+            logging.error(f"Playlist returned no URLs: {args.playlist}")
+            return 1
+
+        print_info(f"Processing {len(urls)} video(s) from playlist")
+        logging.info(f"[PLAYLIST] Starting processing of {len(urls)} videos from: {args.playlist}")
+
+        # Process each video (same logic as batch mode)
+        total_start = time.time()
+        results = {'success': 0, 'failed': 0}
+
+        for idx, url in enumerate(urls, 1):
+            print(f"\n{Colors.BOLD}{'─'*60}{Colors.ENDC}")
+            print(f"{Colors.BOLD}Playlist video {idx}/{len(urls)}{Colors.ENDC}")
+            print(f"{Colors.BOLD}{'─'*60}{Colors.ENDC}\n")
+
+            logging.info(f"[PLAYLIST] Processing video {idx}/{len(urls)}: {url}")
+
+            success = process_single_video(
+                url,
+                audio_only=args.audio_only,
+                force=args.force,
+                download_only=args.download_only
+            )
+
+            if success:
+                results['success'] += 1
+            else:
+                results['failed'] += 1
+                logging.warning(f"[PLAYLIST] Failed video {idx}/{len(urls)}: {url}")
+                print_warning("Continuing with next video...")
+
+        total_elapsed = time.time() - total_start
+
+        print_header("Playlist Processing Complete!")
+        print(f"\n{Colors.BOLD}Statistics:{Colors.ENDC}")
+        print(f"  ✅ Successful: {Colors.OKGREEN}{results['success']}{Colors.ENDC}")
+        print(f"  ❌ Failed:     {Colors.FAIL}{results['failed']}{Colors.ENDC}")
+        print(f"  📊 Total:      {len(urls)}")
+        print(f"  ⏱️  Time:       {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
+
+        if results['success'] > 0:
+            print(f"\n{Colors.OKGREEN}{Colors.BOLD}✨ {results['success']} video(s) processed successfully! ✨{Colors.ENDC}")
+
+        logging.info("="*60)
+        logging.info("PLAYLIST PROCESSING SUMMARY")
+        logging.info(f"Playlist: {args.playlist}")
+        logging.info(f"Total videos: {len(urls)}")
+        logging.info(f"Successful: {results['success']}")
+        logging.info(f"Failed: {results['failed']}")
+        logging.info(f"Total time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
+        logging.info("="*60)
+
         return 0 if results['success'] > 0 else 1
 
 # ============================================================================
