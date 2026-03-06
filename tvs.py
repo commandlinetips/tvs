@@ -430,33 +430,45 @@ def download_video(url, audio_only=False):
 
         return None, False, site
 
-    # Find the most recently created VIDEO file in site directory
+    # Find what was downloaded by comparing before/after file sets
     try:
-        video_files = [f for f in site_dir.glob("*") if f.suffix.lower() in video_extensions]
+        videos_after = {f.name for f in site_dir.glob("*") if f.suffix.lower() in video_extensions}
+        new_files = videos_after - videos_before
 
-        if not video_files:
-            print_error("No video files found after download")
-            return None, False, site
-
-        # Sort by modification time and get the most recent
-        video_file = sorted(video_files, key=lambda p: p.stat().st_mtime, reverse=True)[0]
-        file_size = video_file.stat().st_size / (1024**2)  # MB
-
-        # Check if file already existed
-        already_existed = video_file.name in videos_before
-
-        if already_existed:
-            print_warning(f"Video already exists: {video_file.name}")
-            print_info("Skipping download (file already present)")
-            logging.info(f"[DOWNLOAD] Skipped (already exists): {video_file.resolve()}")
-        else:
+        if new_files:
+            # A new file appeared — this is the one we just downloaded
+            video_file = site_dir / list(new_files)[0]
+            file_size = video_file.stat().st_size / (1024**2)
             print_success(f"Downloaded: {video_file.name}")
             print_info(f"Time: {elapsed:.1f}s")
+            print_info(f"Size: {file_size:.1f} MB")
             logging.info(f"[DOWNLOAD] Success in {elapsed:.1f}s: {video_file.resolve()} ({file_size:.1f} MB)")
+            return video_file, False, site
 
-        print_info(f"Size: {file_size:.1f} MB")
+        # No new file — yt-dlp skipped it (already in archive). Find the correct file
+        # by asking yt-dlp for the expected filename, then matching by stem.
+        get_fn_cmd = ["yt-dlp", "--print", "filename", "--restrict-filenames", "-o", filename_pattern, url]
+        if site == 'youtube':
+            get_fn_cmd.extend(["--extractor-args", "youtube:player_client=android,web"])
+        if use_cookies:
+            get_fn_cmd.extend(["--cookies", str(cookie_file)])
+        fn_success, fn_stdout, _ = run_command(get_fn_cmd, cwd=site_dir, timeout=60)
 
-        return video_file, already_existed, site
+        if fn_success and fn_stdout.strip():
+            expected_stem = Path(fn_stdout.strip()).stem
+            matching = [f for f in site_dir.glob(f"{expected_stem}.*") if f.suffix.lower() in video_extensions]
+            if matching:
+                video_file = matching[0]
+                file_size = video_file.stat().st_size / (1024**2)
+                print_warning(f"Video already exists: {video_file.name}")
+                print_info("Skipping download (file already present)")
+                print_info(f"Size: {file_size:.1f} MB")
+                logging.info(f"[DOWNLOAD] Skipped (already exists): {video_file.resolve()}")
+                return video_file, True, site
+
+        print_error("Could not locate downloaded file")
+        logging.error(f"[DOWNLOAD] Could not locate file for: {url}")
+        return None, False, site
 
     except Exception as e:
         print_error(f"Error finding downloaded file: {e}")
@@ -603,13 +615,15 @@ def transcribe_video(video_file, force=False):
     print_info("Using Whisper Large V3 Turbo model...")
     logging.debug(f"[TRANSCRIBE] Running vibe with timeout={timeout}s")
 
-    # vibe is a GTK app and needs DISPLAY even in CLI mode.
-    # Always set DISPLAY=:0 if not already set — without it vibe fails with
-    # "Gtk-WARNING: cannot open display" even when called from the terminal.
+    # vibe is a GTK app and needs a valid X display even in CLI mode.
+    # Verify the display socket actually exists; if not, auto-detect one.
     vibe_env = os.environ.copy()
-    if not vibe_env.get('DISPLAY'):
-        vibe_env['DISPLAY'] = ':0'
-        logging.debug("[TRANSCRIBE] DISPLAY not set — forcing DISPLAY=:0 for vibe")
+    display = vibe_env.get('DISPLAY', '')
+    x_socket = Path(f'/tmp/.X11-unix/X{display.lstrip(":")}') if display else None
+    if not display or not x_socket or not x_socket.exists():
+        x_sockets = sorted(Path('/tmp/.X11-unix').glob('X*'))
+        vibe_env['DISPLAY'] = f':{x_sockets[0].name[1:]}' if x_sockets else ':0'
+        logging.debug(f"[TRANSCRIBE] Auto-detected DISPLAY={vibe_env['DISPLAY']} for vibe")
 
     start_time = time.time()
     success, stdout, stderr = run_command(cmd, cwd=video_file.parent, timeout=timeout, env=vibe_env)
