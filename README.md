@@ -1,232 +1,286 @@
 # TVS - Text-Video-Summarizer
 
-A standalone Python tool for downloading, transcribing, and summarizing videos from social media platforms automatically.
+A standalone Python CLI tool for downloading, transcribing, and summarizing videos from social media platforms.
 
 ## Features
 
 ### Core Features
-✅ **Single Video Processing** - Process one video at a time
-✅ **Batch Processing** - Process multiple videos from a URL list file
-✅ **Smart Download Detection** - Detects already downloaded videos and skips re-downloading
-✅ **Smart Transcript Caching** - Skips transcription if transcript already exists (use `-f` to force)
-✅ **Audio-Only Mode** - Download only audio for 10x faster processing (`-a` flag)
-✅ **Live Terminal Output** - Real-time progress updates (`-t` flag)
-✅ **Vibe-Only Transcription** - Uses Whisper Large V3 Turbo for accurate transcription
-✅ **AI-Powered Summarization** - Claude AI analyzes transcripts and generates intelligent summaries
-✅ **Colored Terminal Output** - Beautiful progress indicators and status messages
-✅ **Error Handling** - Clear error messages with troubleshooting steps
+- **Single Video Processing** - Process one video at a time
+- **Batch Processing** - Process multiple videos from a URL list file
+- **Smart Caching** - Skips already downloaded videos and existing transcripts
+- **Audio-Only Mode** - Download only audio for faster processing (`-a` flag)
+- **Live Terminal Output** - Real-time progress updates (`-t` flag)
+- **Parakeet Transcription** - NVIDIA NeMo parakeet-tdt-0.6b-v3 for accurate ASR
+- **AI Summarization** - OpenCode agent generates intelligent summaries
+- **Color Demo** - View available terminal colors (`--colors` flag)
 
-### v3.1 Features (November 2025)
-✅ **Multi-Site Support** - Organize videos by platform (Instagram, TikTok, X, etc.)
-✅ **Smart Cookie Management** - Organized cookies by site with expiration warnings
-✅ **AI Smart Naming** - Social media videos get descriptive AI-generated filenames
-✅ **Automatic Hashtags** - 3-5 relevant hashtags added to all summaries
-✅ **Platform Detection** - Automatically detects source and organizes accordingly
+### v4.0 Features (March 2026)
+- **Parakeet Migration** - Replaced vibe with NVIDIA NeMo parakeet-tdt-0.6b-v3
+- **Cross-Platform Support** - macOS, Ubuntu/Debian, Fedora, Arch Linux
+- **Local Model** - 2.3 GB model stored in repository directory
+- **Conda Environment** - Isolated `nemo` environment for transcription
+- **Opencode-Style Colors** - Clean, semantic color names
+
+### v3.x Features
+- **Multi-Site Support** - YouTube, Instagram, TikTok, X/Twitter
+- **Cookie Management** - Organized by site with expiration warnings
+- **AI Smart Naming** - Descriptive filenames for social media videos
+- **Automatic Hashtags** - 3-5 relevant hashtags in summaries
+- **Platform Detection** - Auto-detect source and organize accordingly
 
 ## Requirements
 
-- Python 3.13+
-- yt-dlp (video downloader)
-- vibe (AI transcription tool)
-- OpenCode (AI agent framework for summary generation)
-- Whisper Large V3 Turbo model (1.5 GB, auto-downloaded by vibe GUI)
-- mediainfo (video metadata extraction)
+| Requirement | Purpose | Install |
+|-------------|---------|---------|
+| Python 3.13+ | Runtime | System package |
+| yt-dlp | Video downloading | `brew install yt-dlp` / `pip install yt-dlp` |
+| ffmpeg | Audio conversion | `brew install ffmpeg` / `sudo apt install ffmpeg` |
+| mediainfo | Duration detection (optional) | `brew install mediainfo` |
+| conda (miniforge) | Environment management | `brew install --cask miniforge` |
+| nemo_toolkit | ASR transcription | `pip install 'nemo_toolkit[asr]'` |
+| opencode | Summary generation | See [opencode.ai](https://opencode.ai) |
 
 ## Installation
 
+### macOS (Apple Silicon/Intel)
+
 ```bash
-# Install required packages (Arch Linux)
-sudo pacman -S yt-dlp mediainfo
-yay -S vibe-bin
+# Install Homebrew if not installed
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Run vibe GUI once to download the Whisper model (1.5 GB)
-vibe
+# Install dependencies
+brew install yt-dlp ffmpeg mediainfo
 
-# Install OpenCode (if not already installed)
-# Follow instructions at https://github.com/opencode/opencode
+# Install Miniforge (conda)
+brew install --cask miniforge
 
-# Clone the repository
+# Initialize conda
+conda init zsh  # or bash
+source ~/.zshrc
+
+# Create nemo environment
+conda create -n nemo python=3.11 -y
+conda activate nemo
+pip install 'nemo_toolkit[asr]'
+
+# Clone repository
 git clone https://github.com/commandlinetips/tvs.git
 cd tvs
 
-# Make script executable
-chmod +x tvs.py
+# Download parakeet model (2.3 GB)
+git clone https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+
+# Verify model
+ls -la parakeet-tdt-0.6b-v3/parakeet-tdt-0.6b-v3.nemo
+```
+
+### Ubuntu/Debian
+
+```bash
+# Install system dependencies
+sudo apt update
+sudo apt install -y python3.11 python3-pip ffmpeg mediainfo
+
+# Install yt-dlp
+pip install yt-dlp --break-system-packages
+# Or: sudo wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && sudo chmod +x /usr/local/bin/yt-dlp
+
+# Install Miniforge
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3-Linux-x86_64.sh
+source ~/.bashrc
+
+# Create nemo environment
+conda create -n nemo python=3.11 -y
+conda activate nemo
+pip install 'nemo_toolkit[asr]'
+
+# Clone repository
+git clone https://github.com/commandlinetips/tvs.git
+cd tvs
+
+# Download parakeet model (2.3 GB)
+git clone https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+```
+
+### Fedora
+
+```bash
+# Install system dependencies
+sudo dnf install -y python3.11 python3-pip ffmpeg mediainfo
+
+# Install yt-dlp
+pip install yt-dlp
+
+# Install Miniforge
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3-Linux-x86_64.sh
+source ~/.bashrc
+
+# Create nemo environment
+conda create -n nemo python=3.11 -y
+conda activate nemo
+pip install 'nemo_toolkit[asr]'
+
+# Clone and setup
+git clone https://github.com/commandlinetips/tvs.git
+cd tvs
+git clone https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+```
+
+### Arch Linux
+
+```bash
+# Install system dependencies
+sudo pacman -S yt-dlp ffmpeg mediainfo python
+
+# Install miniforge from AUR
+yay -S miniforge
+
+# Initialize and create environment
+conda init zsh
+source ~/.zshrc
+conda create -n nemo python=3.11 -y
+conda activate nemo
+pip install 'nemo_toolkit[asr]'
+
+# Clone and setup
+git clone https://github.com/commandlinetips/tvs.git
+cd tvs
+git clone https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
 ```
 
 ## Usage
 
-### Quick Start (Recommended)
+### Quick Start
 
 ```bash
-# Single video - audio-only with live output (fastest)
+# Single video - audio-only with live output (recommended)
 python3.13 tvs.py -u "VIDEO_URL" -a -t
 
-# Force re-transcription (when needed)
+# Force re-transcription
 python3.13 tvs.py -u "VIDEO_URL" -a -t -f
+
+# Download only (skip transcription)
+python3.13 tvs.py -u "VIDEO_URL" -a -t -d
 
 # Batch processing
 python3.13 tvs.py --list urls.txt -a -t
+
+# Show color demo
+python3.13 tvs.py --colors
 ```
 
 ### Command Flags
 
-| Flag | Long Form      | Description                                  |
-|------|----------------|----------------------------------------------|
-| `-u` | `--url`        | Single video URL                             |
-| `-l` | `--list`       | URL list file                                |
-| `-a` | `--audio-only` | Download audio only (10x faster, smaller)    |
-| `-t` | `--terminal`   | Show live output (no buffering)              |
-| `-f` | `--force`      | Force re-transcription (skip existing check) |
-| `-h` | `--help`       | Show help message                            |
+| Flag | Long Form | Description |
+|------|-----------|-------------|
+| `-u` | `--url` | Single video URL |
+| `-l` | `--list` | URL list file (one per line) |
+| `-a` | `--audio-only` | Download audio only (faster, smaller) |
+| `-t` | `--terminal` | Show live output (no buffering) |
+| `-f` | `--force` | Force re-transcription |
+| `-d` | `--download-only` | Download only, skip transcription |
+| | `--colors` | Show color demo and exit |
+| `-h` | `--help` | Show help message |
 
-### Examples
-
-**Process Single Video:**
-```bash
-# Instagram/TikTok/social media video
-python3.13 tvs.py -u "https://social-media-site.com/video/123" -a -t
-
-# Long video
-python3.13 tvs.py -u "https://video-platform.com/watch?v=ABC123" -a -t
-```
-
-**Batch Processing:**
-```bash
-# Create URL list file
-cat > urls.txt << 'EOF'
-# My videos to process
-https://social-media-site.com/video/123
-https://video-platform.com/watch?v=ABC123
-https://another-site.com/post/XYZ789
-EOF
-
-# Process all videos
-python3.13 tvs.py --list urls.txt -a -t
-```
-
-**Force Re-transcription:**
-```bash
-# When transcript is corrupted or you want fresh transcription
-python3.13 tvs.py -u "VIDEO_URL" -a -t -f
-```
-
-### URL List File Format
+### URL List Format
 
 ```
 # Comments start with #
 # Blank lines are ignored
 
-https://social-media-site.com/video/123
-https://video-platform.com/watch?v=ABC
+https://youtube.com/watch?v=ABC123
+https://instagram.com/reel/XYZ789
 
-# Another comment
-https://another-site.com/post/XYZ
+# More URLs
+https://tiktok.com/@user/video/123456
 ```
 
-## Output Structure
-
-### Files Created (v3.1 - Organized by Platform)
+## Directory Structure
 
 ```
-~/Videos/
-├── instagram/                               # Instagram videos
-│   ├── C_ABC123.m4a                        # Audio (ID-based filename)
-│   └── C_ABC123-transcript.txt
-├── youtube/                                 # YouTube videos
-│   ├── Video_Title_Here.m4a
-│   └── Video_Title_Here-transcript.txt
-├── tiktok/                                  # TikTok videos
-├── x/                                       # X/Twitter videos
-├── threads/                                 # Threads videos (manual only)
-└── other/                                   # Other platforms
-
-~/Work/Kai/video/
-├── Video_Title_Here-transcript.txt          # Backup (title-based)
-├── Video_Title_Here-summarize.md            # Summary with hashtags ⭐
-├── python-tutorial-C_ABC123-transcript.txt  # Backup (AI-named)
-└── python-tutorial-C_ABC123-summarize.md    # AI-named summary ⭐
+tvs/
+├── tvs.py                    # Main script
+├── videos/                   # Downloaded media
+│   ├── youtube/
+│   ├── instagram/
+│   ├── tiktok/
+│   └── x/
+├── transcripts/              # Transcripts and summaries
+├── logs/                     # Debug and processed logs
+├── cookies/                  # Platform cookies (optional)
+│   ├── instagram/
+│   ├── tiktok/
+│   └── x/
+└── parakeet-tdt-0.6b-v3/     # Transcription model (2.3 GB)
+    └── parakeet-tdt-0.6b-v3.nemo
 ```
 
-### Summary Contents
+## Processing Pipeline
 
-Each AI-generated summary includes:
-- **Comprehensive Analysis:** Deep content analysis by Claude AI
-- **Key Themes:** Main topics and insights
-- **Notable Quotes:** Important statements from the video
-- **Actionable Takeaways:** Practical insights to apply
-- **Metadata:** For social media videos (filename suggestion, hashtags, video ID)
-- **Hashtags:** 3-5 relevant tags for categorization (all platforms)
+```
+URL → download_video() → transcribe_video() → copy_transcript() → generate_summary()
+        (yt-dlp)            (parakeet)           (shutil)          (OpenCode)
+```
+
+### Step Details
+
+1. **Environment Validation** - Check yt-dlp, ffmpeg, conda, nemo env
+2. **Download** - yt-dlp downloads video/audio to `videos/<platform>/`
+3. **Transcribe** - parakeet-tdt-0.6b-v3 transcribes audio (requires conda env)
+4. **Copy** - Transcript copied to `transcripts/`
+5. **Summarize** - OpenCode agent generates AI summary
+
+## Output Files
+
+```
+videos/
+├── youtube/Video_Title.m4a           # Audio file
+├── youtube/Video_Title-transcript.txt # Transcript
+
+transcripts/
+├── Video_Title-transcript.txt        # Transcript copy
+└── Video_Title-summarize.md          # AI summary with hashtags
+```
 
 ### Platform-Specific Naming
 
-| Platform           | Download Filename | Summary Filename                   |
-|--------------------|-------------------|------------------------------------|
-| YouTube            | `Video_Title.m4a` | `Video_Title-summarize.md`         |
-| Instagram          | `C_XYZ123.m4a`    | `ai-topic-C_XYZ123-summarize.md`   |
-| TikTok             | `7123456789.m4a`  | `ai-topic-7123456789-summarize.md` |
-| X/Twitter          | `username_123.m4a`| `username_123-summarize.md`        |
-| Threads (manual)   | `manual_name.m4a` | `ai-topic-manual_name-summarize.md`|
+| Platform | Video Filename | Summary Filename |
+|----------|----------------|------------------|
+| YouTube | `Video_Title.m4a` | `Video_Title-summarize.md` |
+| Instagram | `C_XYZ123.m4a` | `ai-topic-C_XYZ123-summarize.md` |
+| TikTok | `7123456789.m4a` | `ai-topic-7123456789-summarize.md` |
+| X/Twitter | `username_123.m4a` | `username_123-summarize.md` |
 
-## Processing Time
+## Processing Times
 
-### Audio-Only Mode (`-a` flag) - RECOMMENDED ⭐
+### Audio-Only Mode (Recommended)
 
-**56-minute video:**
-- Download: 30-90 seconds (50 MB audio)
-- Transcription: 10-17 minutes (or SKIPPED if transcript exists!)
-- Summary: 30-60 seconds (AI analysis)
-- **Total: 12-20 minutes** (or ~1 minute if re-run!)
+| Video Length | Download | Transcribe | Summary | Total |
+|--------------|----------|------------|---------|-------|
+| 1 minute | ~5s | ~10s | ~30s | ~45s |
+| 10 minutes | ~15s | ~1m | ~30s | ~2m |
+| 60 minutes | ~60s | ~5m | ~45s | ~7m |
 
-**1-minute video:**
-- Download: ~5-10 seconds
-- Transcription: ~10-15 seconds (or SKIPPED!)
-- Summary: ~30-60 seconds
-- **Total: ~45-85 seconds** (or ~30 seconds if re-run!)
+### Why Audio-Only?
+- 10x smaller files (50 MB vs 500 MB)
+- 10x faster downloads
+- Transcription only needs audio
+- Same quality transcripts
 
-### Video Mode (480p) - NOT RECOMMENDED
+## Cookie Setup (Social Media)
 
-**56-minute video:**
-- Download: 5-8 minutes (500 MB video)
-- Transcription: 10-17 minutes (same as audio-only)
-- Summary: 30-60 seconds
-- **Total: 15-25 minutes** (10x slower download for no benefit!)
+For Instagram, TikTok, and X/Twitter, cookies may be required.
 
-**Why Audio-Only is Better:**
-- ✅ 10x smaller files (50 MB vs 500 MB)
-- ✅ 10x faster download (1 min vs 8 min)
-- ✅ Transcription only needs audio anyway
-- ✅ Same quality transcripts
-- ✅ Saves disk space and bandwidth
+### Export Cookies
 
-## Features in Detail
+1. Install browser extension "Get cookies.txt LOCALLY"
+2. Log into the platform in your browser
+3. Export cookies for the site
 
-### 1. Smart Caching (Download + Transcript)
+### Cookie Locations
 
-**Download caching:**
-```
-⚠️  Video already exists: Video_Title_Here.m4a
-ℹ️  Skipping download (file already present)
-```
-
-**Transcript caching (NEW in v3.0):**
-```
-⚠️  Transcript already exists: Video_Title_Here-transcript.txt
-ℹ️  Skipping transcription (use -f to force)
-```
-
-Saves 10-17 minutes on re-runs! Use `-f` flag to force re-transcription.
-
-### 2. Multi-Site Cookie Management (v3.1)
-
-**Cookie age warning:**
-```
-ℹ️  Using instagram cookies for authentication
-⚠️  Cookie file is 32 days old (threshold: 30 days)
-⚠️  COOKIES MAY HAVE EXPIRED - CONSIDER UPDATING
-ℹ️  Cookie location: ~/tools/automation/tvs/cookies/instagram/www.instagram.com_cookies.txt
-```
-
-**Cookie directory structure:**
 ```
 cookies/
 ├── instagram/www.instagram.com_cookies.txt
@@ -235,121 +289,13 @@ cookies/
 └── youtube/www.youtube.com_cookies.txt
 ```
 
-### 3. AI Smart Naming for Social Media (v3.1)
+### Cookie Warnings
 
-**For Instagram/TikTok/Threads:**
-- AI reads transcript and generates descriptive filename
-- Max 3-4 words, lowercase-with-hyphens
-- Video ID preserved for tracking
-- Example: `C_ABC123.m4a` → `python-tutorial-C_ABC123-summarize.md`
-
-**For YouTube/X:**
-- Keeps original title-based naming (already descriptive)
-
-### 4. Automatic Hashtag Generation (v3.1)
-
-**All summaries include hashtags:**
-```markdown
-## Metadata (for social media)
-**Suggested Filename:** python-async-programming
-**Hashtags:** #python #async #tutorial #programming
-**Video ID:** C_ABC123
-
-Or (for YouTube):
-#python #webdev #tutorial #coding #opensource
-```
-
-### 5. Batch Processing Statistics
-
-After processing multiple videos:
-```
-Batch Processing Complete!
-
-Statistics:
-  ✅ Successful: 5
-  ❌ Failed:     1
-  📊 Total:      6
-  ⏱️  Time:       125.3s (2.1 min)
-```
-
-### 6. Error Handling
-
-If transcription fails:
-```
-❌ Transcription failed
-⚠️  Troubleshooting:
-  1. Verify model exists:
-     ls -lh ~/.local/share/github.com.thewh1teagle.vibe/ggml-large-v3-turbo.bin
-  2. Check video has audio:
-     ffprobe -v error -select_streams a:0 ...
-  3. Try running vibe GUI first
-```
-
-## Command Reference
-
-| Command | Description |
-|---------|-------------|
-| `python3.13 tvs.py -u <URL> -a -t` | Single video (audio-only, live output) ⭐ |
-| `python3.13 tvs.py -u <URL> -a -t -f` | Force re-transcription |
-| `python3.13 tvs.py -l <file> -a -t` | Batch process with live output |
-| `python3.13 tvs.py --help` | Show help message |
-
-**Recommended flags:**
-- Always use `-a` (audio-only) - 10x faster
-- Use `-t` (terminal output) - see progress in real-time
-- Use `-f` (force) - only when transcript needs regeneration
-
-## Configuration
-
-### Directories
-
-Configured at the top of the script:
-```python
-VIDEOS_DIR = Path.home() / "Videos"
-WORK_DIR = Path.home() / "Work" / "Kai" / "video"
-```
-
-### Vibe Model
-
-```python
-VIBE_MODEL = Path.home() / ".local/share/github.com.thewh1teagle.vibe/ggml-large-v3-turbo.bin"
-```
-
-### Timeouts
-
-```python
-# In run_command() function
-timeout=600  # Download timeout: 10 minutes
-timeout=900  # Transcription timeout: 15 minutes
-```
-
-## Workflow
+TVS warns when cookies are 30+ days old:
 
 ```
-1. Environment Validation
-   ├── Check yt-dlp installed
-   ├── Check vibe installed
-   ├── Check vibe model exists
-   └── Create directories if needed
-
-2. Download Video (yt-dlp)
-   ├── Check if already exists
-   ├── Download with --restrict-filenames
-   └── Verify video file created
-
-3. Transcribe Audio (vibe)
-   ├── Use Whisper Large V3 Turbo model
-   ├── Automatic language detection
-   └── Save as plain text
-
-4. Copy Transcript
-   └── Create backup in work directory
-
-5. Generate Summary
-   ├── Read transcript
-   ├── Analyze content
-   ├── Create structured markdown
-   └── Save to work directory
+⚠️  Cookie file is 32 days old (threshold: 30 days)
+⚠️  COOKIES MAY HAVE EXPIRED - CONSIDER UPDATING
 ```
 
 ## Troubleshooting
@@ -357,129 +303,134 @@ timeout=900  # Transcription timeout: 15 minutes
 ### Model Not Found
 
 ```bash
-# Run vibe GUI to download Whisper model (1.5 GB)
-vibe
+# Verify model exists
+ls -la parakeet-tdt-0.6b-v3/parakeet-tdt-0.6b-v3.nemo
+
+# Download if missing
+git clone https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
 ```
 
-Model location:
-```
-~/.local/share/github.com.thewh1teagle.vibe/ggml-large-v3-turbo.bin
-```
+### Conda Environment Issues
 
-### Cookie Issues (Social Media)
-
-**Problem:** "Sign in to confirm you're not a bot"
-
-**Solution:**
-1. Export fresh cookies from browser using extension (e.g., "Get cookies.txt LOCALLY")
-2. Place in correct directory:
-   ```bash
-   ~/tools/automation/tvs/cookies/instagram/www.instagram.com_cookies.txt
-   ~/tools/automation/tvs/cookies/tiktok/www.tiktok.com_cookies.txt
-   ~/tools/automation/tvs/cookies/x/x.com_cookies.txt
-   ```
-3. TVS warns when cookies are ≥30 days old
-
-### Threads Not Supported
-
-**Current Status:** yt-dlp (version 2025.10.22) doesn't support Threads yet
-
-**Workaround:**
-1. Download Threads video manually from browser
-2. Place in `~/Videos/threads/`
-3. Run TVS on the downloaded file (transcription and summary will work)
-
-**Check for updates:**
 ```bash
-yt-dlp -U  # Update yt-dlp
+# Verify nemo environment
+conda env list
+
+# Recreate if needed
+conda create -n nemo python=3.11 -y
+conda activate nemo
+pip install 'nemo_toolkit[asr]'
+
+# Test import
+python -c "import nemo.collections.asr; print('OK')"
 ```
 
-### Video Has No Audio
+### Transcription Fails
 
-Some videos don't have audio tracks. Check with:
 ```bash
-ffprobe -v error -select_streams a:0 -show_entries stream=codec_name VIDEO_FILE
+# Check video has audio
+ffprobe -v error -select_streams a:0 VIDEO_FILE
+
+# Check ffmpeg
+ffmpeg -version
+
+# Run manually to debug
+conda activate nemo
+python -c "
+import nemo.collections.asr as nemo_asr
+model = nemo_asr.models.ASRModel.restore_from('parakeet-tdt-0.6b-v3/parakeet-tdt-0.6b-v3.nemo')
+print(model.transcribe(['test.wav']))
+"
 ```
 
 ### Download Fails
 
 - Check internet connection
 - Verify URL is valid
-- Try updating yt-dlp: `yay -S yt-dlp`
-- For social media: check cookies are fresh
+- Update yt-dlp: `yt-dlp -U` or `pip install -U yt-dlp`
+- For social media: ensure cookies are fresh
 
-### Transcription Timeout
+### Threads Not Supported
 
-Already configured for 40-minute timeout (sufficient for most videos).
+yt-dlp doesn't support Threads yet. Workaround:
 
-For extremely long videos (>2 hours), increase timeout in code:
-```python
-# Line ~289 in tvs.py
-success, stdout, stderr = run_command(cmd, cwd=VIDEOS_DIR, timeout=3600)  # 60 min
-```
-
-### AI Summary Generation Fails
-
-**Requirements:**
-- OpenCode must be installed and configured
-- transcript-analyzer agent must be available
-
-**Check:**
-```bash
-opencode agent list | grep transcript-analyzer
-```
+1. Download Threads video manually
+2. Place in `videos/threads/`
+3. Transcription and summary will work
 
 ## Supported Platforms
 
-| Platform  | Download | Transcribe | Summary | AI Naming | Status         |
-|-----------|----------|------------|---------|-----------|----------------|
-| YouTube   | ✅       | ✅         | ✅      | ❌        | Fully working  |
-| Instagram | ✅       | ✅         | ✅      | ✅        | Fully working  |
-| TikTok    | ✅       | ✅         | ✅      | ✅        | Fully working  |
-| X/Twitter | ✅       | ✅         | ✅      | ❌        | Fully working  |
-| Threads   | ❌       | ✅*        | ✅*     | ✅*       | Manual download only |
+| Platform | Download | Transcribe | Summary | AI Naming | Status |
+|----------|----------|------------|---------|-----------|--------|
+| YouTube | Yes | Yes | Yes | No | Fully working |
+| Instagram | Yes | Yes | Yes | Yes | Fully working |
+| TikTok | Yes | Yes | Yes | Yes | Fully working |
+| X/Twitter | Yes | Yes | Yes | No | Fully working |
+| Threads | No | Yes* | Yes* | Yes* | Manual download |
 
 *Requires manual video download first
 
-## Project Links
+## Model Information
 
-- **GitHub:** https://github.com/commandlinetips/tvs
-- **Documentation:** See `USAGE.md` and `IMPROVEMENTS.md`
-- **Issues:** Report bugs or request features on GitHub
+### parakeet-tdt-0.6b-v3
+
+- **Source:** NVIDIA NeMo
+- **Size:** 2.3 GB
+- **Download:** https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+- **Requirements:** nemo_toolkit[asr], Python 3.11+
+
+```bash
+# Clone model
+git clone https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+
+# Or download specific file
+wget https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3/resolve/main/parakeet-tdt-0.6b-v3.nemo
+```
 
 ## Version History
 
+### v4.0 (March 2026)
+- Migrated from vibe to parakeet-tdt-0.6b-v3 (NVIDIA NeMo)
+- Added cross-platform installation instructions
+- Added conda environment isolation (`nemo`)
+- Updated color class to opencode-style semantic names
+- Added `--colors` flag for color demo
+- Model stored in repository directory (not user home)
+- Removed dependency on vibe-bin
+
 ### v3.1 (November 2025)
-- ✅ Multi-site support with platform detection
-- ✅ Organized cookie management by site
-- ✅ Cookie expiration warnings (30-day threshold)
-- ✅ AI-powered smart naming for social media videos
-- ✅ Automatic hashtag generation for all summaries
-- ✅ Filename length validation (3-4 words max)
-- ✅ Site-specific output directories
-- ✅ Short video duration parsing fix
-- ✅ Threads site detection (download not supported by yt-dlp yet)
+- Multi-site support with platform detection
+- Organized cookie management by site
+- Cookie expiration warnings (30-day threshold)
+- AI-powered smart naming for social media
+- Automatic hashtag generation
 
 ### v3.0 (October 2025)
-- ✅ Smart transcript caching (skip if exists)
-- ✅ AI-powered summaries using Claude via OpenCode
-- ✅ Audio-only mode (`-a` flag)
-- ✅ Live terminal output (`-t` flag)
-- ✅ Force re-transcription flag (`-f`)
-- ✅ Improved error handling with troubleshooting steps
+- Smart transcript caching
+- AI summaries via OpenCode
+- Audio-only mode
+- Live terminal output
+- Force re-transcription flag
 
 ### v2.0 (Earlier)
-- ✅ Batch processing support
-- ✅ Smart download detection
-- ✅ Colored terminal output
-- ✅ Template-based summaries
+- Batch processing support
+- Smart download detection
+- Colored terminal output
+
+## License
+
+MIT License
+
+## Links
+
+- **GitHub:** https://github.com/commandlinetips/tvs
+- **Model:** https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+- **NeMo:** https://github.com/NVIDIA/NeMo
+- **OpenCode:** https://opencode.ai
 
 ---
 
 **Created:** 2025-10-31
-**Updated:** 2025-11-06
+**Updated:** 2026-03-27
 **Author:** skullthoughts
-**Version:** TVS v3.1
-**License:** MIT
-
-
+**Version:** TVS v4.0

@@ -38,3 +38,16 @@ tvs-threads-attempt.py.bak
 backup_stable/
 cookies/
 logs/
+videos/
+transcripts/
+screen/
+markdown/
+TVS-Quick.app/
+parakeet-tdt-0.6b-v3/
+
+# Misc files
+x.post.md
+tvs-quick.sh
+resersh.md
+mind-power.md
+.DS_Store

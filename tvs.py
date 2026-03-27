@@ -33,38 +33,78 @@ WORK_DIR = SCRIPT_DIR / "transcripts"
 LOG_DIR = SCRIPT_DIR / "logs"
 
 # Parakeet transcription configuration
-PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
-CONDA_PATH = "/opt/homebrew/bin/conda"
+# Local model path: <repo>/parakeet-tdt-0.6b-v3/parakeet-tdt-0.6b-v3.nemo
+PARAKEET_MODEL = SCRIPT_DIR / "parakeet-tdt-0.6b-v3" / "parakeet-tdt-0.6b-v3.nemo"
+
+
+# Try to find conda in common locations or via 'which'
+def get_conda_path():
+    # 1. Try which conda
+    try:
+        result = subprocess.run(["which", "conda"], capture_output=True, text=True)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except:
+        pass
+
+    # 2. Try common locations
+    common_paths = [
+        "/opt/homebrew/bin/conda",
+        "/usr/local/bin/conda",
+        str(Path.home() / "anaconda3" / "bin" / "conda"),
+        str(Path.home() / "miniconda3" / "bin" / "conda"),
+        "/opt/homebrew/Caskroom/miniforge/base/bin/conda",
+    ]
+    for path in common_paths:
+        if Path(path).exists():
+            return path
+    return "/opt/homebrew/bin/conda"  # Fallback
+
+
+CONDA_PATH = get_conda_path()
 CONDA_ENV = "nemo"
 
 # Cookies directory structure (organized by site)
 COOKIES_DIR = SCRIPT_DIR / "cookies"
 SITE_COOKIES = {
-    'instagram': COOKIES_DIR / "instagram" / "www.instagram.com_cookies.txt",
-    'threads': COOKIES_DIR / "threads" / "www.threads.net_cookies.txt",
-    'tiktok': COOKIES_DIR / "tiktok" / "www.tiktok.com_cookies.txt",
-    'x': COOKIES_DIR / "x" / "x.com_cookies.txt",
-    'youtube': COOKIES_DIR / "youtube" / "www.youtube.com_cookies.txt",
+    "instagram": COOKIES_DIR / "instagram" / "www.instagram.com_cookies.txt",
+    "threads": COOKIES_DIR / "threads" / "www.threads.net_cookies.txt",
+    "tiktok": COOKIES_DIR / "tiktok" / "www.tiktok.com_cookies.txt",
+    "x": COOKIES_DIR / "x" / "x.com_cookies.txt",
+    "youtube": COOKIES_DIR / "youtube" / "www.youtube.com_cookies.txt",
 }
 
 # Cookie expiration warning threshold (days)
 COOKIE_WARNING_DAYS = 30
 
-# Colors for terminal output
+
+# Colors for terminal output (opencode-style)
 class Colors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    WHITE = "\033[97m"
+    GRAY = "\033[90m"
+
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    UNDERLINE = "\033[4m"
+    RESET = "\033[0m"
+
+    SUCCESS = GREEN
+    WARNING = YELLOW
+    ERROR = RED
+    INFO = CYAN
+    HEADER = MAGENTA
+
 
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
+
 
 def setup_logging():
     """
@@ -87,36 +127,43 @@ def setup_logging():
     logger.setLevel(logging.DEBUG)
 
     # 1. DEBUG LOG - Verbose logging of all operations
-    debug_handler = logging.FileHandler(debug_log_file, mode='a', encoding='utf-8')
+    debug_handler = logging.FileHandler(debug_log_file, mode="a", encoding="utf-8")
     debug_handler.setLevel(logging.DEBUG)
-    debug_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    debug_formatter = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
     debug_handler.setFormatter(debug_formatter)
     logger.addHandler(debug_handler)
 
     # 2. PROCESSED FILES LOG - Clean summary handler (only for file processing results)
     # We'll use this separately via a custom logger
-    processed_handler = logging.FileHandler(processed_log_file, mode='a', encoding='utf-8')
+    processed_handler = logging.FileHandler(
+        processed_log_file, mode="a", encoding="utf-8"
+    )
     processed_handler.setLevel(logging.INFO)
-    processed_formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    processed_formatter = logging.Formatter(
+        "%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
     processed_handler.setFormatter(processed_formatter)
 
     # Create separate logger for processed files
-    processed_logger = logging.getLogger('processed')
+    processed_logger = logging.getLogger("processed")
     processed_logger.handlers.clear()
     processed_logger.setLevel(logging.INFO)
     processed_logger.addHandler(processed_handler)
     processed_logger.propagate = False  # Don't propagate to root logger
 
     # Log session start in both logs
-    logging.info("="*60)
+    logging.info("=" * 60)
     logging.info("TVS SESSION STARTED")
-    logging.info("="*60)
+    logging.info("=" * 60)
 
-    processed_logger.info("="*60)
+    processed_logger.info("=" * 60)
     processed_logger.info("SESSION START")
-    processed_logger.info("="*60)
+    processed_logger.info("=" * 60)
 
     return debug_log_file, processed_log_file
+
 
 def detect_site(url):
     """
@@ -130,18 +177,19 @@ def detect_site(url):
     """
     url_lower = url.lower()
 
-    if 'instagram.com' in url_lower:
-        return 'instagram'
-    elif 'threads.net' in url_lower or 'threads.com' in url_lower:
-        return 'threads'
-    elif 'tiktok.com' in url_lower:
-        return 'tiktok'
-    elif 'x.com' in url_lower or 'twitter.com' in url_lower:
-        return 'x'
-    elif 'youtube.com' in url_lower or 'youtu.be' in url_lower:
-        return 'youtube'
+    if "instagram.com" in url_lower:
+        return "instagram"
+    elif "threads.net" in url_lower or "threads.com" in url_lower:
+        return "threads"
+    elif "tiktok.com" in url_lower:
+        return "tiktok"
+    elif "x.com" in url_lower or "twitter.com" in url_lower:
+        return "x"
+    elif "youtube.com" in url_lower or "youtu.be" in url_lower:
+        return "youtube"
     else:
-        return 'other'
+        return "other"
+
 
 def get_site_output_dir(site):
     """
@@ -156,6 +204,7 @@ def get_site_output_dir(site):
     site_dir = VIDEOS_DIR / site
     site_dir.mkdir(parents=True, exist_ok=True)
     return site_dir
+
 
 def check_cookie_age(cookie_file):
     """
@@ -178,71 +227,124 @@ def check_cookie_age(cookie_file):
 
     return int(age_days), is_old
 
+
 def print_header(text):
     """Print colored header."""
-    print(f"\n{Colors.HEADER}{Colors.BOLD}{'='*60}{Colors.ENDC}")
-    print(f"{Colors.HEADER}{Colors.BOLD}{text}{Colors.ENDC}")
-    print(f"{Colors.HEADER}{Colors.BOLD}{'='*60}{Colors.ENDC}\n", flush=True)
+    print(f"\n{Colors.HEADER}{Colors.BOLD}{'=' * 60}{Colors.RESET}")
+    print(f"{Colors.HEADER}{Colors.BOLD}{text}{Colors.RESET}")
+    print(f"{Colors.HEADER}{Colors.BOLD}{'=' * 60}{Colors.RESET}\n", flush=True)
+
 
 def print_step(step_num, text):
     """Print step number and description."""
-    print(f"{Colors.OKBLUE}{Colors.BOLD}[Step {step_num}]{Colors.ENDC} {text}", flush=True)
+    print(
+        f"{Colors.BLUE}{Colors.BOLD}[Step {step_num}]{Colors.RESET} {text}", flush=True
+    )
+
 
 def print_success(text):
     """Print success message."""
-    print(f"{Colors.OKGREEN}✅ {text}{Colors.ENDC}", flush=True)
+    print(f"{Colors.SUCCESS}[+]{Colors.RESET} {text}", flush=True)
+
 
 def print_error(text):
     """Print error message."""
-    print(f"{Colors.FAIL}❌ {text}{Colors.ENDC}", flush=True)
+    print(f"{Colors.ERROR}[-]{Colors.RESET} {text}", flush=True)
+
 
 def print_warning(text):
     """Print warning message."""
-    print(f"{Colors.WARNING}⚠️  {text}{Colors.ENDC}", flush=True)
+    print(f"{Colors.WARNING}[!]{Colors.RESET} {text}", flush=True)
+
 
 def print_info(text):
     """Print info message."""
-    print(f"{Colors.OKCYAN}ℹ️  {text}{Colors.ENDC}", flush=True)
+    print(f"{Colors.INFO}[*]{Colors.RESET} {text}", flush=True)
 
-def run_command(cmd, cwd=None, timeout=600, shell=False):
+
+def print_color_demo():
+    """Print a demo of all available colors."""
+    print(f"\n{Colors.BOLD}{'=' * 60}{Colors.RESET}")
+    print(f"{Colors.HEADER}{Colors.BOLD}  TVS Color Demo{Colors.RESET}")
+    print(f"{Colors.BOLD}{'=' * 60}{Colors.RESET}\n")
+
+    print(f"{Colors.SUCCESS}[+]{Colors.RESET} Success - Successful operations")
+    print(f"{Colors.WARNING}[!]{Colors.RESET} Warning - Warnings and cautions")
+    print(f"{Colors.ERROR}[-]{Colors.RESET} Error - Errors and failures")
+    print(f"{Colors.INFO}[*]{Colors.RESET} Info - Information messages")
+    print(f"{Colors.BLUE}[Step]{Colors.RESET} Step - Step indicators")
+    print(f"{Colors.HEADER}[Header]{Colors.RESET} Header - Section headers")
+    print(f"{Colors.GRAY}[Dim]{Colors.RESET} Dim - Muted text")
+    print(f"{Colors.BOLD}Bold{Colors.RESET} - Emphasis")
+    print(f"{Colors.UNDERLINE}Underline{Colors.RESET} - Links/references")
+    print(f"{Colors.DIM}Dimmed{Colors.RESET} - Secondary text")
+    print(f"\n{Colors.BOLD}Standard Colors:{Colors.RESET}")
+    print(
+        f"{Colors.RED}Red{Colors.RESET} {Colors.GREEN}Green{Colors.RESET} {Colors.YELLOW}Yellow{Colors.RESET} {Colors.BLUE}Blue{Colors.RESET} {Colors.MAGENTA}Magenta{Colors.RESET} {Colors.CYAN}Cyan{Colors.RESET} {Colors.WHITE}White{Colors.RESET} {Colors.GRAY}Gray{Colors.RESET}"
+    )
+    print()
+
+
+def run_command(cmd, cwd=None, timeout=600, shell=False, log_output=True):
     """
     Run shell command and return output.
 
     Args:
-        cmd: Command as list or string
+        cmd: Command to run (list or string)
         cwd: Working directory
-        timeout: Timeout in seconds
-        shell: Run command through shell (needed for conda activation)
+        timeout: Timeout in seconds (default: 600)
+        shell: Run as shell command
+        log_output: Log command output to debug log
 
     Returns:
-        tuple: (success, stdout, stderr)
+        tuple: (success: bool, stdout: str, stderr: str)
     """
-    try:
-        if isinstance(cmd, str) and not shell:
-            cmd = cmd.split()
+    cmd_display = cmd if isinstance(cmd, str) else " ".join(cmd)
+    logging.debug(f"[CMD] Running: {cmd_display}")
 
+    start_time = time.time()
+    try:
         result = subprocess.run(
             cmd,
             cwd=cwd,
             capture_output=True,
             text=True,
             timeout=timeout,
-            check=False,
             shell=shell,
-            executable='/bin/zsh' if shell else None
         )
+        elapsed = time.time() - start_time
 
         success = result.returncode == 0
+
+        if log_output:
+            logging.debug(
+                f"[CMD] Return code: {result.returncode} (elapsed: {elapsed:.1f}s)"
+            )
+            if result.stdout:
+                logging.debug(f"[CMD] stdout: {result.stdout[:1000]}")
+            if result.stderr:
+                logging.debug(f"[CMD] stderr: {result.stderr[:1000]}")
+            if not success:
+                logging.error(f"[CMD] FAILED: {cmd_display}")
+                if result.stdout:
+                    logging.error(f"[CMD] Full stdout: {result.stdout}")
+                if result.stderr:
+                    logging.error(f"[CMD] Full stderr: {result.stderr}")
+
         return success, result.stdout, result.stderr
 
-    except subprocess.TimeoutExpired:
-        return False, "", "Command timed out"
+    except subprocess.TimeoutExpired as e:
+        logging.error(f"[CMD] TIMEOUT after {timeout}s: {cmd_display}")
+        return False, "", f"Command timed out after {timeout}s"
     except Exception as e:
+        logging.error(f"[CMD] EXCEPTION: {e}")
         return False, "", str(e)
+
 
 # ============================================================================
 # VALIDATION FUNCTIONS
 # ============================================================================
+
 
 def validate_environment():
     """Validate that all required tools and paths exist."""
@@ -253,7 +355,7 @@ def validate_environment():
 
     # Check yt-dlp
     logging.debug("Checking for yt-dlp...")
-    success, _, _ = run_command("yt-dlp --version")
+    success, _, _ = run_command(["yt-dlp", "--version"])
     if not success:
         errors.append("yt-dlp not found. Install with: brew install yt-dlp")
         logging.error("yt-dlp not found")
@@ -263,7 +365,7 @@ def validate_environment():
 
     # Check ffmpeg (needed for audio conversion)
     logging.debug("Checking for ffmpeg...")
-    success, _, _ = run_command("ffmpeg -version")
+    success, _, _ = run_command(["ffmpeg", "-version"])
     if not success:
         errors.append("ffmpeg not found. Install with: brew install ffmpeg")
         logging.error("ffmpeg not found")
@@ -283,10 +385,14 @@ def validate_environment():
 
     # Check nemo conda environment
     logging.debug(f"Checking for conda env '{CONDA_ENV}'...")
-    success, _, _ = run_command(f"{CONDA_PATH} env list | grep -q '^{CONDA_ENV} '", shell=True)
+    success, _, _ = run_command(
+        f"{CONDA_PATH} env list | grep -q '^{CONDA_ENV} '", shell=True
+    )
     if not success:
         errors.append(f"Conda environment '{CONDA_ENV}' not found")
-        errors.append(f"Create it with: conda create -n {CONDA_ENV} python=3.11 && conda activate {CONDA_ENV} && pip install 'nemo_toolkit[asr]'")
+        errors.append(
+            f"Create it with: conda create -n {CONDA_ENV} python=3.11 && conda activate {CONDA_ENV} && pip install 'nemo_toolkit[asr]'"
+        )
         logging.error(f"Conda env '{CONDA_ENV}' not found")
     else:
         print_success(f"Conda env '{CONDA_ENV}' found")
@@ -294,10 +400,14 @@ def validate_environment():
 
     # Check mediainfo (optional but recommended)
     logging.debug("Checking for mediainfo...")
-    success, _, _ = run_command("mediainfo --version")
+    success, _, _ = run_command(["mediainfo", "--version"])
     if not success:
-        print_warning("mediainfo not found (optional). Install with: brew install mediainfo")
-        print_info("Without mediainfo, timeout estimation for long videos may be inaccurate")
+        print_warning(
+            "mediainfo not found (optional). Install with: brew install mediainfo"
+        )
+        print_info(
+            "Without mediainfo, timeout estimation for long videos may be inaccurate"
+        )
         logging.warning("mediainfo not found (optional)")
     else:
         print_success("mediainfo found")
@@ -325,9 +435,11 @@ def validate_environment():
     logging.info("Environment validation PASSED")
     return True
 
+
 # ============================================================================
 # MAIN PROCESSING FUNCTIONS
 # ============================================================================
+
 
 def download_video(url, audio_only=False):
     """
@@ -359,13 +471,26 @@ def download_video(url, audio_only=False):
     print_info(f"Output directory: {site_dir}")
 
     # Get list of video/audio files before download
-    video_extensions = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.m4v', '.m4a', '.opus'}
-    videos_before = {f.name for f in site_dir.glob("*") if f.suffix.lower() in video_extensions}
+    video_extensions = {
+        ".mp4",
+        ".webm",
+        ".mkv",
+        ".avi",
+        ".mov",
+        ".flv",
+        ".wmv",
+        ".m4v",
+        ".m4a",
+        ".opus",
+    }
+    videos_before = {
+        f.name for f in site_dir.glob("*") if f.suffix.lower() in video_extensions
+    }
 
     # Determine filename pattern based on platform
     # Instagram/Threads/TikTok: use ID + description (if available)
     # YouTube: use title (more descriptive)
-    if site in ['instagram', 'threads', 'tiktok']:
+    if site in ["instagram", "threads", "tiktok"]:
         # Try to get description/caption, fall back to ID
         filename_pattern = "%(id)s.%(ext)s"
     else:
@@ -382,8 +507,12 @@ def download_video(url, audio_only=False):
         # Check cookie age and warn if old
         age_days, is_old = check_cookie_age(cookie_file)
         if is_old:
-            print_warning(f"Cookie file is {age_days} days old (threshold: {COOKIE_WARNING_DAYS} days)")
-            print_warning(f"⚠️  {Colors.FAIL}COOKIES MAY HAVE EXPIRED - CONSIDER UPDATING{Colors.ENDC}")
+            print_warning(
+                f"Cookie file is {age_days} days old (threshold: {COOKIE_WARNING_DAYS} days)"
+            )
+            print_warning(
+                f"[WARN] {Colors.ERROR}COOKIES MAY HAVE EXPIRED - CONSIDER UPDATING{Colors.ENDC}"
+            )
             print_info(f"Cookie location: {cookie_file}")
         else:
             print_info(f"Cookie age: {age_days} days (OK)")
@@ -393,10 +522,13 @@ def download_video(url, audio_only=False):
         cmd = [
             "yt-dlp",
             "--restrict-filenames",
-            "-f", "bestaudio/best",  # Audio only
+            "-f",
+            "bestaudio/best",  # Audio only
             "-x",  # Extract audio
-            "--audio-format", "best",  # Keep best audio format
-            "-o", filename_pattern,
+            "--audio-format",
+            "best",  # Keep best audio format
+            "-o",
+            filename_pattern,
         ]
         if use_cookies:
             cmd.extend(["--cookies", str(cookie_file)])
@@ -406,8 +538,10 @@ def download_video(url, audio_only=False):
         cmd = [
             "yt-dlp",
             "--restrict-filenames",
-            "-f", "bestvideo[height<=480]+bestaudio/best[height<=480]/best",  # Max 480p to save space
-            "-o", filename_pattern,
+            "-f",
+            "bestvideo[height<=480]+bestaudio/best[height<=480]/best",  # Max 480p to save space
+            "-o",
+            filename_pattern,
         ]
         if use_cookies:
             cmd.extend(["--cookies", str(cookie_file)])
@@ -415,33 +549,45 @@ def download_video(url, audio_only=False):
 
     start_time = time.time()
     logging.debug(f"[DOWNLOAD] Running yt-dlp with timeout=1200s")
-    success, stdout, stderr = run_command(cmd, cwd=site_dir, timeout=1200)  # 20 min for large files
+    success, stdout, stderr = run_command(
+        cmd, cwd=site_dir, timeout=1200
+    )  # 20 min for large files
     elapsed = time.time() - start_time
 
     if not success:
         print_error("Download failed")
-        print(f"Error: {stderr}")
-        logging.error(f"[DOWNLOAD] Failed after {elapsed:.1f}s - Error: {stderr[:200]}")
+        print(f"Error: {stderr[:500]}")
+        logging.error(f"[DOWNLOAD] Failed after {elapsed:.1f}s")
+        logging.error(f"[DOWNLOAD] Full stderr: {stderr}")
+        logging.error(f"[DOWNLOAD] Full stdout: {stdout}")
 
         # Special error handling for unsupported sites
-        if site == 'threads' and 'Unsupported URL' in stderr:
+        if site == "threads" and "Unsupported URL" in stderr:
             print_warning("Threads is not yet supported by yt-dlp")
-            print_info("Threads support is in development. Check yt-dlp updates: yt-dlp -U")
-            print_info("Alternative: Download manually and use the transcript/summary features")
+            print_info(
+                "Threads support is in development. Check yt-dlp updates: yt-dlp -U"
+            )
+            print_info(
+                "Alternative: Download manually and use the transcript/summary features"
+            )
             logging.warning(f"[DOWNLOAD] Unsupported site: {site}")
 
         return None, False, site
 
     # Find the most recently created VIDEO file in site directory
     try:
-        video_files = [f for f in site_dir.glob("*") if f.suffix.lower() in video_extensions]
+        video_files = [
+            f for f in site_dir.glob("*") if f.suffix.lower() in video_extensions
+        ]
 
         if not video_files:
             print_error("No video files found after download")
             return None, False, site
 
         # Sort by modification time and get the most recent
-        video_file = sorted(video_files, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+        video_file = sorted(video_files, key=lambda p: p.stat().st_mtime, reverse=True)[
+            0
+        ]
         file_size = video_file.stat().st_size / (1024**2)  # MB
 
         # Check if file already existed
@@ -454,7 +600,9 @@ def download_video(url, audio_only=False):
         else:
             print_success(f"Downloaded: {video_file.name}")
             print_info(f"Time: {elapsed:.1f}s")
-            logging.info(f"[DOWNLOAD] Success in {elapsed:.1f}s: {video_file.resolve()} ({file_size:.1f} MB)")
+            logging.info(
+                f"[DOWNLOAD] Success in {elapsed:.1f}s: {video_file.resolve()} ({file_size:.1f} MB)"
+            )
 
         print_info(f"Size: {file_size:.1f} MB")
 
@@ -464,6 +612,7 @@ def download_video(url, audio_only=False):
         print_error(f"Error finding downloaded file: {e}")
         logging.error(f"[DOWNLOAD] Exception: {e}")
         return None, False, site
+
 
 def get_video_duration(video_file):
     """
@@ -494,20 +643,20 @@ def get_video_duration(video_file):
         total_minutes = 0
 
         # Extract hours
-        if 'h' in duration_str:
-            hours_part = duration_str.split('h')[0].strip()
+        if "h" in duration_str:
+            hours_part = duration_str.split("h")[0].strip()
             try:
                 total_minutes += int(hours_part.split()[-1]) * 60
             except (ValueError, IndexError):
                 pass
 
         # Extract minutes
-        if 'min' in duration_str:
+        if "min" in duration_str:
             # Get the part with minutes
-            if 'h' in duration_str:
-                min_part = duration_str.split('h')[1].split('min')[0].strip()
+            if "h" in duration_str:
+                min_part = duration_str.split("h")[1].split("min")[0].strip()
             else:
-                min_part = duration_str.split('min')[0].strip()
+                min_part = duration_str.split("min")[0].strip()
             try:
                 total_minutes += int(min_part.split()[-1])
             except (ValueError, IndexError):
@@ -515,10 +664,10 @@ def get_video_duration(video_file):
 
         # Handle seconds-only videos (e.g., "55 s 915 ms")
         # If no hours or minutes found, check for seconds and round up to 1 minute
-        if total_minutes == 0 and 's' in duration_str and 'min' not in duration_str:
+        if total_minutes == 0 and "s" in duration_str and "min" not in duration_str:
             try:
                 # Extract seconds (before " s")
-                seconds_part = duration_str.split('s')[0].strip()
+                seconds_part = duration_str.split("s")[0].strip()
                 seconds = int(seconds_part.split()[-1])
                 # Round up to at least 1 minute for short videos
                 total_minutes = max(1, (seconds + 59) // 60)  # Round up
@@ -530,6 +679,7 @@ def get_video_duration(video_file):
     except Exception as e:
         print_warning(f"Could not determine video duration: {e}")
         return None
+
 
 def convert_audio_for_parakeet(video_file):
     """
@@ -562,12 +712,16 @@ def convert_audio_for_parakeet(video_file):
     # Use ffmpeg to convert: mono, 16kHz, 16-bit PCM WAV
     cmd = [
         "ffmpeg",
-        "-i", str(video_file),
-        "-ac", "1",           # Mono
-        "-ar", "16000",       # 16kHz
-        "-acodec", "pcm_s16le",  # 16-bit PCM
-        "-y",                 # Overwrite
-        str(converted_file)
+        "-i",
+        str(video_file),
+        "-ac",
+        "1",  # Mono
+        "-ar",
+        "16000",  # 16kHz
+        "-acodec",
+        "pcm_s16le",  # 16-bit PCM
+        "-y",  # Overwrite
+        str(converted_file),
     ]
 
     start_time = time.time()
@@ -575,7 +729,9 @@ def convert_audio_for_parakeet(video_file):
 
     if not success:
         print_error(f"Audio conversion failed: {stderr[:200]}")
-        logging.error(f"[CONVERT] Failed: {stderr[:200]}")
+        logging.error(f"[CONVERT] Failed")
+        logging.error(f"[CONVERT] Full stderr: {stderr}")
+        logging.error(f"[CONVERT] Full stdout: {stdout}")
         return None
 
     elapsed = time.time() - start_time
@@ -584,9 +740,12 @@ def convert_audio_for_parakeet(video_file):
     print_success(f"Converted: {converted_file.name}")
     print_info(f"Size: {file_size:.1f} MB")
     print_info(f"Time: {elapsed:.1f}s")
-    logging.info(f"[CONVERT] Success in {elapsed:.1f}s: {converted_file} ({file_size:.1f} MB)")
+    logging.info(
+        f"[CONVERT] Success in {elapsed:.1f}s: {converted_file} ({file_size:.1f} MB)"
+    )
 
     return converted_file
+
 
 def transcribe_video(video_file, force=False):
     """
@@ -603,7 +762,9 @@ def transcribe_video(video_file, force=False):
     Returns:
         Path: Path to transcript file, or None on error
     """
-    logging.info(f"[TRANSCRIBE] Starting - Video: {video_file.resolve()}, force: {force}")
+    logging.info(
+        f"[TRANSCRIBE] Starting - Video: {video_file.resolve()}, force: {force}"
+    )
 
     print_step(2, "Transcribing video...")
     print_info(f"Video: {video_file.name}")
@@ -618,13 +779,15 @@ def transcribe_video(video_file, force=False):
         print_info("Skipping transcription (file already present)")
 
         transcript_size = transcript_file.stat().st_size
-        with open(transcript_file, 'r') as f:
+        with open(transcript_file, "r") as f:
             transcript_text = f.read()
             word_count = len(transcript_text.split())
 
         print_info(f"Size: {transcript_size} bytes")
         print_info(f"Words: {word_count}")
-        logging.info(f"[TRANSCRIBE] Skipped (already exists): {transcript_file.resolve()} ({word_count} words)")
+        logging.info(
+            f"[TRANSCRIBE] Skipped (already exists): {transcript_file.resolve()} ({word_count} words)"
+        )
 
         return transcript_file
 
@@ -637,7 +800,17 @@ def transcribe_video(video_file, force=False):
     # Create Python script to run transcription in conda env
     # Write to a temp file to avoid shell quote issues
     import tempfile
+
     audio_path = str(converted_audio.resolve())
+    model_path = str(PARAKEET_MODEL.resolve())
+
+    logging.debug(f"[TRANSCRIBE] Audio path: {audio_path}")
+    logging.debug(f"[TRANSCRIBE] Model path: {model_path}")
+
+    if not PARAKEET_MODEL.exists():
+        print_error(f"Parakeet model not found: {model_path}")
+        logging.error(f"[TRANSCRIBE] Model file not found: {model_path}")
+        return None
 
     transcription_script = f'''
 import nemo.collections.asr as nemo_asr
@@ -649,12 +822,13 @@ import logging
 logging.getLogger('nemo_logger').setLevel(logging.ERROR)
 
 audio_file = r"{audio_path}"
+model_path = r"{model_path}"
 
 print("Loading parakeet model...", file=sys.stderr)
 start = time.time()
 
 try:
-    asr_model = nemo_asr.models.ASRModel.from_pretrained(model_name="{PARAKEET_MODEL}")
+    asr_model = nemo_asr.models.ASRModel.restore_from(restore_path=model_path)
     load_time = time.time() - start
     print(f"Model loaded in {{load_time:.1f}}s", file=sys.stderr)
 
@@ -673,18 +847,19 @@ try:
         sys.exit(1)
 
 except Exception as e:
+    import traceback
     print(f"ERROR: {{e}}", file=sys.stderr)
+    traceback.print_exc()
     sys.exit(1)
 '''
 
     # Write script to temp file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(transcription_script)
         script_path = f.name
 
-    # Build command to run in conda environment
-    conda_activate = f'eval "$({CONDA_PATH} shell.zsh hook)" && conda activate {CONDA_ENV}'
-    cmd = f'{conda_activate} && python3 {script_path}'
+    # Build command to run in conda environment using conda run (more reliable)
+    cmd = f"{CONDA_PATH} run -n {CONDA_ENV} python {script_path}"
 
     print_info(f"Using parakeet-tdt-0.6b-v3 model...")
     logging.debug(f"[TRANSCRIBE] Running in conda env '{CONDA_ENV}'")
@@ -693,12 +868,14 @@ except Exception as e:
     duration_minutes = get_video_duration(video_file)
     if duration_minutes:
         print_info(f"Duration: {duration_minutes} minutes")
-        # Parakeet is faster, but still needs reasonable timeout
-        timeout = max(300, duration_minutes * 60)  # At least 5 min
+        # Timeout = video duration + 2 minutes buffer
+        # Parakeet should be ~10x realtime, so this is very generous
+        timeout = (duration_minutes * 60) + 120
+        timeout = max(300, timeout)  # At least 5 minutes
     else:
-        timeout = 1200  # 20 minutes default
+        timeout = 900  # 15 minutes default if duration unknown
 
-    print_info(f"Transcription timeout: {timeout//60} minutes")
+    print_info(f"Transcription timeout: {timeout // 60} minutes {timeout % 60} seconds")
 
     start_time = time.time()
     success, stdout, stderr = run_command(cmd, shell=True, timeout=timeout)
@@ -713,11 +890,16 @@ except Exception as e:
     if not success or not stdout.strip():
         print_error("Transcription failed")
         if stderr:
-            print(f"Error: {stderr[-500:]}")  # Show last 500 chars
+            print(f"Error: {stderr[-500:]}")
         logging.error(f"[TRANSCRIBE] Failed after {elapsed:.1f}s")
+        logging.error(f"[TRANSCRIBE] Full stderr: {stderr}")
+        logging.error(f"[TRANSCRIBE] Full stdout: {stdout}")
+        logging.error(f"[TRANSCRIBE] Command was: {cmd}")
         print_warning("Troubleshooting:")
         print(f"  1. Ensure conda env '{CONDA_ENV}' exists with nemo_toolkit")
-        print(f"     conda activate {CONDA_ENV} && python -c 'import nemo.collections.asr'")
+        print(
+            f"     conda activate {CONDA_ENV} && python -c 'import nemo.collections.asr'"
+        )
         print("  2. Check video has audio:")
         print(f"     ffprobe -v error -select_streams a:0 {video_file}")
         return None
@@ -739,9 +921,12 @@ except Exception as e:
     print_info(f"Size: {transcript_size} bytes")
     print_info(f"Words: {word_count}")
     print_info(f"Time: {elapsed:.1f}s")
-    logging.info(f"[TRANSCRIBE] Success in {elapsed:.1f}s: {transcript_file.resolve()} ({word_count} words)")
+    logging.info(
+        f"[TRANSCRIBE] Success in {elapsed:.1f}s: {transcript_file.resolve()} ({word_count} words)"
+    )
 
     return transcript_file
+
 
 def copy_transcript(transcript_file):
     """
@@ -760,6 +945,7 @@ def copy_transcript(transcript_file):
 
     try:
         import shutil
+
         shutil.copy2(transcript_file, dest_file)
 
         print_success(f"Copied to: {dest_file}")
@@ -771,7 +957,8 @@ def copy_transcript(transcript_file):
         logging.error(f"[COPY] Failed: {e}")
         return None
 
-def generate_summary(transcript_file, video_file, site='other'):
+
+def generate_summary(transcript_file, video_file, site="other"):
     """
     Generate summary from transcript using OpenCode agent.
 
@@ -789,7 +976,7 @@ def generate_summary(transcript_file, video_file, site='other'):
 
     # Read transcript to get word count for context
     try:
-        with open(transcript_file, 'r') as f:
+        with open(transcript_file, "r") as f:
             transcript_text = f.read().strip()
         word_count = len(transcript_text.split())
     except Exception as e:
@@ -810,11 +997,13 @@ def generate_summary(transcript_file, video_file, site='other'):
             print_success(f"Summary already exists: {summary_file.name}")
             print_info(f"Size: {file_size} bytes")
             print_info("Skipping summary generation (use -f flag to force regenerate)")
-            logging.info(f"[SUMMARY] Skipped (already exists): {summary_file.resolve()}")
+            logging.info(
+                f"[SUMMARY] Skipped (already exists): {summary_file.resolve()}"
+            )
             return summary_file
 
     # Build prompt for OpenCode agent with special handling for Instagram
-    if site in ['instagram', 'threads', 'tiktok']:
+    if site in ["instagram", "threads", "tiktok"]:
         # For social media with ID-based filenames, ask AI to generate smart title
         prompt = f"""Analyze the video transcript and generate a comprehensive summary.
 
@@ -848,7 +1037,7 @@ Save the summary to the specified output location."""
         # For YouTube, use regular summary (title is already good)
         prompt = f"""Analyze the video transcript and generate a comprehensive summary.
 
-Video filename: {video_file.stem.replace('_', ' ')}
+Video filename: {video_file.stem.replace("_", " ")}
 Transcript location: {transcript_file}
 Output location: {summary_file}
 Transcript contains: {word_count} words
@@ -859,22 +1048,28 @@ At the END of the summary, add relevant hashtags for categorization (3-5 hashtag
 
     # Execute OpenCode agent
     cmd = [
-        "opencode", "run",
-        "--agent", "transcript-analyzer",
-        prompt  # Positional argument, not --prompt
+        "opencode",
+        "run",
+        "--agent",
+        "transcript-analyzer",
+        prompt,  # Positional argument, not --prompt
     ]
 
     print_info("Running AI analysis (this may take 30-60 seconds)...")
     logging.debug(f"[SUMMARY] Running OpenCode agent with timeout=600s")
     start_time = time.time()
-    success, stdout, stderr = run_command(cmd, cwd=WORK_DIR, timeout=600)  # 10 min timeout
+    success, stdout, stderr = run_command(
+        cmd, cwd=WORK_DIR, timeout=600
+    )  # 10 min timeout
     elapsed = time.time() - start_time
 
     if not success:
         print_error("Failed to generate summary with OpenCode agent")
         if stderr:
-            print_error(f"Error: {stderr[:500]}")  # Show first 500 chars
-        logging.error(f"[SUMMARY] Failed after {elapsed:.1f}s - Error: {stderr[:200]}")
+            print_error(f"Error: {stderr[:500]}")
+        logging.error(f"[SUMMARY] Failed after {elapsed:.1f}s")
+        logging.error(f"[SUMMARY] Full stderr: {stderr}")
+        logging.error(f"[SUMMARY] Full stdout: {stdout}")
         return None
 
     # Verify summary file was created
@@ -886,35 +1081,44 @@ At the END of the summary, add relevant hashtags for categorization (3-5 hashtag
     summary_size = summary_file.stat().st_size / 1024  # KB
     print_success(f"Summary created: {summary_file.name}")
     print_info(f"Size: {summary_size:.1f} KB")
-    logging.info(f"[SUMMARY] Success in {elapsed:.1f}s: {summary_file.resolve()} ({summary_size:.1f} KB)")
+    logging.info(
+        f"[SUMMARY] Success in {elapsed:.1f}s: {summary_file.resolve()} ({summary_size:.1f} KB)"
+    )
 
     # For Instagram/social media, optionally rename based on AI suggestion
-    if site in ['instagram', 'threads', 'tiktok']:
+    if site in ["instagram", "threads", "tiktok"]:
         try:
-            with open(summary_file, 'r') as f:
+            with open(summary_file, "r") as f:
                 summary_content = f.read()
 
             # Look for suggested filename in metadata section
             import re
-            filename_match = re.search(r'\*\*Suggested Filename:\*\*\s*([a-z0-9][a-z0-9-]*[a-z0-9])', summary_content, re.IGNORECASE)
+
+            filename_match = re.search(
+                r"\*\*Suggested Filename:\*\*\s*([a-z0-9][a-z0-9-]*[a-z0-9])",
+                summary_content,
+                re.IGNORECASE,
+            )
 
             if filename_match:
                 suggested_name = filename_match.group(1).lower().strip()
 
                 # Validate: limit to 4 words (3 hyphens max)
-                word_count = suggested_name.count('-') + 1
+                word_count = suggested_name.count("-") + 1
                 if word_count > 4:
                     # Truncate to first 4 words
-                    parts = suggested_name.split('-')
-                    suggested_name = '-'.join(parts[:4])
+                    parts = suggested_name.split("-")
+                    suggested_name = "-".join(parts[:4])
                     print_warning(f"Truncated long filename to: {suggested_name}")
 
                 # Validate: max 50 characters total
                 if len(suggested_name) > 50:
-                    suggested_name = suggested_name[:50].rstrip('-')
+                    suggested_name = suggested_name[:50].rstrip("-")
                     print_warning(f"Truncated filename to 50 chars: {suggested_name}")
 
-                new_summary_file = WORK_DIR / f"{suggested_name}-{video_file.stem}-summarize.md"
+                new_summary_file = (
+                    WORK_DIR / f"{suggested_name}-{video_file.stem}-summarize.md"
+                )
 
                 # Rename if the suggestion is different
                 if new_summary_file != summary_file:
@@ -931,9 +1135,11 @@ At the END of the summary, add relevant hashtags for categorization (3-5 hashtag
 
     return summary_file
 
+
 # ============================================================================
 # MAIN FUNCTION
 # ============================================================================
+
 
 def process_single_video(url, audio_only=False, force=False, download_only=False):
     """
@@ -964,8 +1170,8 @@ def process_single_video(url, audio_only=False, force=False, download_only=False
         print_header("Download Complete!")
         print_success("Video downloaded successfully (download-only mode)")
         print_info(f"Total time: {overall_elapsed:.1f}s")
-        print(f"\n{Colors.BOLD}Output:{Colors.ENDC}")
-        print(f"  📹 Video: {video_file}")
+        print(f"\n{Colors.BOLD}Output:{Colors.RESET}")
+        print(f"  [Video] {video_file}")
 
         # Log downloaded file
         logging.info(f"Downloaded (audio-only={audio_only}): {video_file.resolve()}")
@@ -998,10 +1204,10 @@ def process_single_video(url, audio_only=False, force=False, download_only=False
     print_success("All steps completed successfully")
     print_info(f"Total time: {overall_elapsed:.1f}s")
 
-    print(f"\n{Colors.BOLD}Output Files:{Colors.ENDC}")
-    print(f"  📹 Video:      {video_file}")
-    print(f"  📝 Transcript: {transcript_copy}")
-    print(f"  📊 Summary:    {summary_file}")
+    print(f"\n{Colors.BOLD}Output Files:{Colors.RESET}")
+    print(f"  Video:      {video_file}")
+    print(f"  Transcript: {transcript_copy}")
+    print(f"  Summary:    {summary_file}")
 
     # Log all processed files with full paths (DEBUG LOG)
     logging.info(f"Processing completed successfully for: {url}")
@@ -1012,12 +1218,12 @@ def process_single_video(url, audio_only=False, force=False, download_only=False
     logging.info("-" * 60)
 
     # Log to PROCESSED FILES LOG (clean file history)
-    processed_logger = logging.getLogger('processed')
+    processed_logger = logging.getLogger("processed")
     processed_logger.info(f"URL: {url}")
-    processed_logger.info(f"  📹 Video: {video_file.resolve()}")
-    processed_logger.info(f"  📝 Transcript: {transcript_copy.resolve()}")
-    processed_logger.info(f"  📊 Summary: {summary_file.resolve()}")
-    processed_logger.info(f"  ⏱️  Time: {overall_elapsed:.1f}s")
+    processed_logger.info(f"  Video: {video_file.resolve()}")
+    processed_logger.info(f"  Transcript: {transcript_copy.resolve()}")
+    processed_logger.info(f"  Summary: {summary_file.resolve()}")
+    processed_logger.info(f"  Time: {overall_elapsed:.1f}s")
     processed_logger.info("-" * 80)
 
     return True
@@ -1028,7 +1234,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="TVS - Text-Video-Summarizer: Download, transcribe, and summarize videos",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog=f"""
 Examples:
   # Single video (recommended)
   python3.13 tvs.py -u https://youtube.com/watch?v=dQw4w9WgXcQ -a -t
@@ -1038,51 +1244,63 @@ Examples:
 
 Notes:
   - Transcription: parakeet-tdt-0.6b-v3 (NVIDIA NeMo, requires conda env 'nemo')
-  - Videos saved to: <repo>/videos/
-  - Transcripts/summaries saved to: <repo>/transcripts/
+  - Videos saved to: {VIDEOS_DIR}/
+  - Transcripts/summaries saved to: {WORK_DIR}/
   - URL list file format: one URL per line, blank lines and # comments ignored
-        """
+        """,
     )
 
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group(required=False)
+    group.add_argument("-u", "--url", help="Single video URL (YouTube, etc.)")
     group.add_argument(
-        '-u', '--url',
-        help='Single video URL (YouTube, etc.)'
-    )
-    group.add_argument(
-        '-l', '--list',
-        help='Text file containing list of URLs (one per line)'
+        "-l", "--list", help="Text file containing list of URLs (one per line)"
     )
 
     parser.add_argument(
-        '-a', '--audio-only',
-        action='store_true',
-        help='Download audio only (smaller file size, faster download)'
+        "-a",
+        "--audio-only",
+        action="store_true",
+        help="Download audio only (smaller file size, faster download)",
     )
 
     parser.add_argument(
-        '-t', '--terminal',
-        action='store_true',
-        help='Show live output in terminal (no buffering, real-time updates)'
+        "-t",
+        "--terminal",
+        action="store_true",
+        help="Show live output in terminal (no buffering, real-time updates)",
     )
 
     parser.add_argument(
-        '-f', '--force',
-        action='store_true',
-        help='Force re-transcription even if transcript already exists'
+        "-f",
+        "--force",
+        action="store_true",
+        help="Force re-transcription even if transcript already exists",
     )
 
     parser.add_argument(
-        '-d', '--download-only',
-        action='store_true',
-        help='Download video only (skip transcription and summary)'
+        "-d",
+        "--download-only",
+        action="store_true",
+        help="Download video only (skip transcription and summary)",
+    )
+
+    parser.add_argument(
+        "--colors",
+        action="store_true",
+        help="Show color demo and exit",
     )
 
     args = parser.parse_args()
 
+    if args.colors:
+        print_color_demo()
+        return 0
+
+    if not args.url and not args.list:
+        parser.error("one of the arguments -u/--url -l/--list is required")
+
     # Enable unbuffered output if -t flag is used
     if args.terminal:
-        # Reconfigure stdout to be unbuffered
         sys.stdout.reconfigure(line_buffering=True)
         sys.stderr.reconfigure(line_buffering=True)
 
@@ -1109,16 +1327,21 @@ Notes:
         else:
             print_info("Quality: 480p max (balanced)")
 
-        success = process_single_video(args.url, audio_only=args.audio_only, force=args.force, download_only=args.download_only)
+        success = process_single_video(
+            args.url,
+            audio_only=args.audio_only,
+            force=args.force,
+            download_only=args.download_only,
+        )
 
         if success:
-            print(f"\n{Colors.OKGREEN}{Colors.BOLD}✨ Summary is ready! ✨{Colors.ENDC}")
+            print(f"\n{Colors.SUCCESS}{Colors.BOLD}>> Summary is ready!{Colors.RESET}")
             logging.info("Session completed successfully")
-            logging.info("="*60)
+            logging.info("=" * 60)
             return 0
         else:
             logging.error("Session failed")
-            logging.info("="*60)
+            logging.info("=" * 60)
             return 1
 
     elif args.list:
@@ -1128,7 +1351,7 @@ Notes:
 
         # Read URLs from file
         try:
-            with open(args.list, 'r') as f:
+            with open(args.list, "r") as f:
                 lines = f.readlines()
         except FileNotFoundError:
             print_error(f"File not found: {args.list}")
@@ -1142,7 +1365,7 @@ Notes:
         for line_num, line in enumerate(lines, 1):
             line = line.strip()
             # Skip blank lines and comments
-            if not line or line.startswith('#'):
+            if not line or line.startswith("#"):
                 continue
             urls.append((line_num, line))
 
@@ -1154,21 +1377,25 @@ Notes:
 
         # Process each URL
         total_start = time.time()
-        results = {'success': 0, 'failed': 0, 'skipped': 0}
+        results = {"success": 0, "failed": 0, "skipped": 0}
 
         for idx, (line_num, url) in enumerate(urls, 1):
-            print(f"\n{Colors.BOLD}{'─'*60}{Colors.ENDC}")
-            print(f"{Colors.BOLD}Processing {idx}/{len(urls)} (line {line_num}){Colors.ENDC}")
-            print(f"{Colors.BOLD}{'─'*60}{Colors.ENDC}\n")
+            print(f"\n{Colors.BOLD}{'─' * 60}{Colors.ENDC}\n")
+            print(f"{Colors.BOLD}{'─' * 60}{Colors.ENDC}\n")
 
             logging.info(f"Starting batch video {idx}/{len(urls)}: {url}")
 
-            success = process_single_video(url, audio_only=args.audio_only, force=args.force, download_only=args.download_only)
+            success = process_single_video(
+                url,
+                audio_only=args.audio_only,
+                force=args.force,
+                download_only=args.download_only,
+            )
 
             if success:
-                results['success'] += 1
+                results["success"] += 1
             else:
-                results['failed'] += 1
+                results["failed"] += 1
                 logging.warning(f"Failed to process video {idx}/{len(urls)}: {url}")
                 print_warning("Continuing with next video...")
 
@@ -1177,25 +1404,26 @@ Notes:
 
         print_header("Batch Processing Complete!")
         print(f"\n{Colors.BOLD}Statistics:{Colors.ENDC}")
-        print(f"  ✅ Successful: {Colors.OKGREEN}{results['success']}{Colors.ENDC}")
-        print(f"  ❌ Failed:     {Colors.FAIL}{results['failed']}{Colors.ENDC}")
+        print(f"  ✅ Successful: {Colors.SUCCESS}{results['success']}{Colors.RESET}")
+        print(f"  ❌ Failed:     {Colors.ERROR}{results['failed']}{Colors.RESET}")
         print(f"  📊 Total:      {len(urls)}")
-        print(f"  ⏱️  Time:       {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
-
-        if results['success'] > 0:
-            print(f"\n{Colors.OKGREEN}{Colors.BOLD}✨ {results['success']} video(s) processed successfully! ✨{Colors.ENDC}")
+        print(f"  ⏱️  Time:       {total_elapsed:.1f}s ({total_elapsed / 60:.1f} min)")
+        print(
+            f"\n{Colors.SUCCESS}{Colors.BOLD}[+] {results['success']} video(s) processed successfully!{Colors.RESET}"
+        )
 
         # Log batch processing summary
-        logging.info("="*60)
+        logging.info("=" * 60)
         logging.info("BATCH PROCESSING SUMMARY")
         logging.info(f"Total videos: {len(urls)}")
         logging.info(f"Successful: {results['success']}")
         logging.info(f"Failed: {results['failed']}")
-        logging.info(f"Total time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
-        logging.info("="*60)
+        logging.info(f"Total time: {total_elapsed:.1f}s ({total_elapsed / 60:.1f} min)")
+        logging.info("=" * 60)
 
         # Return 0 if at least one succeeded
-        return 0 if results['success'] > 0 else 1
+        return 0 if results["success"] > 0 else 1
+
 
 # ============================================================================
 # ENTRY POINT
@@ -1210,5 +1438,6 @@ if __name__ == "__main__":
     except Exception as e:
         print_error(f"Unexpected error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
