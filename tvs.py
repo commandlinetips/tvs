@@ -27,10 +27,17 @@ from datetime import datetime
 # Get the directory where this script is located
 SCRIPT_DIR = Path(__file__).parent.resolve()
 
-# Directories (relative to script directory)
+# Directories (VIDEOS_DIR and LOG_DIR relative to script, WORK_DIR can be overridden)
 VIDEOS_DIR = SCRIPT_DIR / "videos"
 WORK_DIR = SCRIPT_DIR / "transcripts"
 LOG_DIR = SCRIPT_DIR / "logs"
+
+
+def set_work_dir(output_path):
+    """Set custom work directory for transcripts and summaries."""
+    global WORK_DIR
+    WORK_DIR = Path(output_path).resolve()
+
 
 # Parakeet transcription configuration
 # Local model path: <repo>/parakeet-tdt-0.6b-v3/parakeet-tdt-0.6b-v3.nemo
@@ -114,6 +121,9 @@ def setup_logging():
     """
     # Create logs directory
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Create work directory for transcripts and summaries
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
 
     # Generate log filenames with format: debug-DD-M-YYYY.log and processed-DD-M-YYYY.log
     now = datetime.now()
@@ -1239,13 +1249,16 @@ Examples:
   # Single video (recommended)
   python3.13 tvs.py -u https://youtube.com/watch?v=dQw4w9WgXcQ -a -t
 
+  # With custom output directory (e.g., your Obsidian vault)
+  python3.13 tvs.py -u https://youtube.com/watch?v=dQw4w9WgXcQ -a -o /path/to/vault
+
   # Batch processing from file
   python3.13 tvs.py --list urls.txt -a -t
 
 Notes:
   - Transcription: parakeet-tdt-0.6b-v3 (NVIDIA NeMo, requires conda env 'nemo')
   - Videos saved to: {VIDEOS_DIR}/
-  - Transcripts/summaries saved to: {WORK_DIR}/
+  - Transcripts/summaries saved to: {WORK_DIR}/ (or custom with -o)
   - URL list file format: one URL per line, blank lines and # comments ignored
         """,
     )
@@ -1290,6 +1303,12 @@ Notes:
         help="Show color demo and exit",
     )
 
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Custom directory for transcripts and summaries (e.g., your Obsidian vault)",
+    )
+
     args = parser.parse_args()
 
     if args.colors:
@@ -1303,6 +1322,11 @@ Notes:
     if args.terminal:
         sys.stdout.reconfigure(line_buffering=True)
         sys.stderr.reconfigure(line_buffering=True)
+
+    # Set custom work directory if -o flag is provided
+    if args.output:
+        set_work_dir(args.output)
+        print_info(f"Using custom output directory: {WORK_DIR}")
 
     # Setup logging
     debug_log, processed_log = setup_logging()
