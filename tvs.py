@@ -39,37 +39,10 @@ def set_work_dir(output_path):
     WORK_DIR = Path(output_path).resolve()
 
 
-# Parakeet transcription configuration
-# Local model path: <repo>/parakeet-tdt-0.6b-v3/parakeet-tdt-0.6b-v3.nemo
-PARAKEET_MODEL = SCRIPT_DIR / "parakeet-tdt-0.6b-v3" / "parakeet-tdt-0.6b-v3.nemo"
-
-
-# Try to find conda in common locations or via 'which'
-def get_conda_path():
-    # 1. Try which conda
-    try:
-        result = subprocess.run(["which", "conda"], capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except:
-        pass
-
-    # 2. Try common locations
-    common_paths = [
-        "/opt/homebrew/bin/conda",
-        "/usr/local/bin/conda",
-        str(Path.home() / "anaconda3" / "bin" / "conda"),
-        str(Path.home() / "miniconda3" / "bin" / "conda"),
-        "/opt/homebrew/Caskroom/miniforge/base/bin/conda",
-    ]
-    for path in common_paths:
-        if Path(path).exists():
-            return path
-    return "/opt/homebrew/bin/conda"  # Fallback
-
-
-CONDA_PATH = get_conda_path()
-CONDA_ENV = "nemo"
+# MLX-Whisper transcription configuration
+MLX_WHISPER_DIR = Path("/Users/khaled/cc-project/insanely-fast-whisper")
+MLX_WHISPER_BIN = MLX_WHISPER_DIR / ".venv" / "bin" / "mlx_whisper"
+MLX_WHISPER_MODEL = "mlx-community/distil-whisper-large-v3"
 
 # Cookies directory structure (organized by site)
 COOKIES_DIR = SCRIPT_DIR / "cookies"
@@ -383,30 +356,17 @@ def validate_environment():
         print_success("ffmpeg found")
         logging.info("ffmpeg found")
 
-    # Check conda
-    logging.debug("Checking for conda...")
-    if not Path(CONDA_PATH).exists():
-        errors.append(f"conda not found at: {CONDA_PATH}")
-        errors.append("Install miniforge: brew install --cask miniforge")
-        logging.error(f"conda not found at {CONDA_PATH}")
-    else:
-        print_success(f"conda found ({CONDA_PATH})")
-        logging.info(f"conda found at {CONDA_PATH}")
-
-    # Check nemo conda environment
-    logging.debug(f"Checking for conda env '{CONDA_ENV}'...")
-    success, _, _ = run_command(
-        f"{CONDA_PATH} env list | grep -q '^{CONDA_ENV} '", shell=True
-    )
-    if not success:
-        errors.append(f"Conda environment '{CONDA_ENV}' not found")
+    # Check mlx-whisper
+    logging.debug("Checking for mlx-whisper...")
+    if not MLX_WHISPER_BIN.exists():
+        errors.append(f"mlx-whisper not found at: {MLX_WHISPER_BIN}")
         errors.append(
-            f"Create it with: conda create -n {CONDA_ENV} python=3.11 && conda activate {CONDA_ENV} && pip install 'nemo_toolkit[asr]'"
+            "Install it in the insanely-fast-whisper repo with: pip install mlx-whisper"
         )
-        logging.error(f"Conda env '{CONDA_ENV}' not found")
+        logging.error(f"mlx-whisper not found at {MLX_WHISPER_BIN}")
     else:
-        print_success(f"Conda env '{CONDA_ENV}' found")
-        logging.info(f"Conda env '{CONDA_ENV}' found")
+        print_success(f"mlx-whisper found ({MLX_WHISPER_BIN})")
+        logging.info(f"mlx-whisper found at {MLX_WHISPER_BIN}")
 
     # Check mediainfo (optional but recommended)
     logging.debug("Checking for mediainfo...")
@@ -545,11 +505,13 @@ def download_video(url, audio_only=False):
         cmd.append(url)
     else:
         # Download video with 480p max quality
+        # Prefer https (direct download) over m3u8/HLS (slow segment-by-segment)
+        # Fallback chain: https direct -> video+audio merge -> any
         cmd = [
             "yt-dlp",
             "--restrict-filenames",
             "-f",
-            "bestvideo[height<=480]+bestaudio/best[height<=480]/best",  # Max 480p to save space
+            "best[protocol=https][height<=480]/bestvideo[height<=480]+bestaudio/best[height<=480]/best",
             "-o",
             filename_pattern,
         ]
@@ -561,7 +523,7 @@ def download_video(url, audio_only=False):
     logging.debug(f"[DOWNLOAD] Running yt-dlp with timeout=1200s")
     success, stdout, stderr = run_command(
         cmd, cwd=site_dir, timeout=1200
-    )  # 20 min for large files
+    )
     elapsed = time.time() - start_time
 
     if not success:
@@ -598,6 +560,21 @@ def download_video(url, audio_only=False):
         video_file = sorted(video_files, key=lambda p: p.stat().st_mtime, reverse=True)[
             0
         ]
+
+        # Normalize filename: remove consecutive dots before extension (e.g. "title..opus" -> "title.opus")
+        import os as _os
+
+        name = video_file.name
+        ext = video_file.suffix
+        base = name[: -len(ext)] if ext else name
+        normalized_base = base.rstrip(".")
+        if normalized_base != base:
+            normalized = video_file.parent / f"{normalized_base}{ext}"
+            if normalized.resolve() != video_file.resolve():
+                if normalized.exists():
+                    normalized.unlink()
+                _os.replace(str(video_file), str(normalized))
+                video_file = normalized
         file_size = video_file.stat().st_size / (1024**2)  # MB
 
         # Check if file already existed
@@ -636,7 +613,7 @@ def get_video_duration(video_file):
     """
     try:
         # Check if mediainfo is available
-        success, _, _ = run_command("mediainfo --version")
+        success, _, _ = run_command(["mediainfo", "--version"])
         if not success:
             return None
 
@@ -691,11 +668,11 @@ def get_video_duration(video_file):
         return None
 
 
-def convert_audio_for_parakeet(video_file):
+def convert_audio_for_whisper(video_file):
     """
-    Convert audio to mono 16kHz WAV for parakeet model.
+    Convert audio to mono 16kHz WAV for transcription.
 
-    Parakeet requires:
+    Whisper prefers:
     - Mono channel (not stereo)
     - 16kHz sample rate
     - WAV format preferred
@@ -706,7 +683,7 @@ def convert_audio_for_parakeet(video_file):
     Returns:
         Path: Path to converted WAV file, or None on error
     """
-    logging.info(f"[CONVERT] Converting audio for parakeet: {video_file.name}")
+    logging.info(f"[CONVERT] Converting audio for whisper: {video_file.name}")
 
     # Create converted filename
     converted_file = video_file.parent / f"{video_file.stem}_mono16k.wav"
@@ -717,7 +694,7 @@ def convert_audio_for_parakeet(video_file):
         logging.info(f"[CONVERT] Using existing: {converted_file}")
         return converted_file
 
-    print_info("Converting audio to mono 16kHz WAV for parakeet...")
+    print_info("Converting audio to mono 16kHz WAV for whisper...")
 
     # Use ffmpeg to convert: mono, 16kHz, 16-bit PCM WAV
     cmd = [
@@ -757,12 +734,67 @@ def convert_audio_for_parakeet(video_file):
     return converted_file
 
 
+def _find_whisper_output(video_file):
+    """
+    Find whisper transcript output file, handling truncated filenames.
+
+    mlx-whisper truncates long filenames (~80 chars). This function tries
+    the exact stem match first, then falls back to prefix-based search.
+
+    Args:
+        video_file: Path to the video file
+
+    Returns:
+        Path to transcript file, or None if not found
+    """
+    # Try exact match patterns: audio_stem.txt and video_stem.txt
+    audio_stem = f"{video_file.stem}_mono16k"
+    for stem in [audio_stem, video_file.stem]:
+        candidate = video_file.parent / f"{stem}.txt"
+        if candidate.exists():
+            return candidate
+
+    # Fallback: mlx-whisper truncates long filenames
+    # Use first 60 chars as prefix (safe margin before truncation point)
+    # Also exclude our own "-transcript.txt" files from results
+    prefix = audio_stem[:60]
+    txt_files = sorted(
+        [
+            f
+            for f in video_file.parent.glob("*.txt")
+            if f.stem.startswith(prefix) and not f.stem.endswith("-transcript")
+        ],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if txt_files:
+        logging.debug(f"[TRANSCRIBE] Whisper truncated filename. Found: {txt_files[0].name}")
+        return txt_files[0]
+
+    # Broader fallback: try video stem prefix too
+    prefix = video_file.stem[:60]
+    txt_files = sorted(
+        [
+            f
+            for f in video_file.parent.glob("*.txt")
+            if f.stem.startswith(prefix) and not f.stem.endswith("-transcript")
+        ],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if txt_files:
+        logging.debug(f"[TRANSCRIBE] Found transcript by video stem: {txt_files[0].name}")
+        return txt_files[0]
+
+    return None
+
+
 def transcribe_video(video_file, force=False):
     """
-    Transcribe video using parakeet-tdt-0.6b-v3 (NVIDIA NeMo).
+    Transcribe video using mlx-whisper (distil-whisper-large-v3).
 
     Requires:
-    - conda environment 'nemo' with nemo_toolkit installed
+    - mlx-whisper installed in the insanely-fast-whisper venv
     - ffmpeg for audio conversion
 
     Args:
@@ -783,103 +815,60 @@ def transcribe_video(video_file, force=False):
     # Create transcript filename
     transcript_file = video_file.parent / f"{video_file.stem}-transcript.txt"
 
-    # Check if transcript already exists
-    if transcript_file.exists() and not force:
-        print_warning(f"Transcript already exists: {transcript_file.name}")
-        print_info("Skipping transcription (file already present)")
+    # Check if transcript already exists (also check for whisper-truncated filename)
+    if not force:
+        existing_transcript = _find_whisper_output(video_file) or (
+            transcript_file if transcript_file.exists() else None
+        )
+        if existing_transcript:
+            target = transcript_file if transcript_file.exists() else existing_transcript
+            print_warning(f"Transcript already exists: {target.name}")
+            print_info("Skipping transcription (file already present)")
 
-        transcript_size = transcript_file.stat().st_size
-        with open(transcript_file, "r") as f:
-            transcript_text = f.read()
+            transcript_size = target.stat().st_size
+            with open(target, "r") as f:
+                transcript_text = f.read()
             word_count = len(transcript_text.split())
 
-        print_info(f"Size: {transcript_size} bytes")
-        print_info(f"Words: {word_count}")
-        logging.info(
-            f"[TRANSCRIBE] Skipped (already exists): {transcript_file.resolve()} ({word_count} words)"
-        )
+            print_info(f"Size: {transcript_size} bytes")
+            print_info(f"Words: {word_count}")
+            logging.info(
+                f"[TRANSCRIBE] Skipped (already exists): {target.resolve()} ({word_count} words)"
+            )
 
-        return transcript_file
+            return target
 
     # Convert audio to mono 16kHz WAV
-    converted_audio = convert_audio_for_parakeet(video_file)
+    converted_audio = convert_audio_for_whisper(video_file)
     if not converted_audio:
-        print_error("Failed to convert audio for parakeet")
+        print_error("Failed to convert audio for whisper")
         return None
-
-    # Create Python script to run transcription in conda env
-    # Write to a temp file to avoid shell quote issues
-    import tempfile
 
     audio_path = str(converted_audio.resolve())
-    model_path = str(PARAKEET_MODEL.resolve())
-
     logging.debug(f"[TRANSCRIBE] Audio path: {audio_path}")
-    logging.debug(f"[TRANSCRIBE] Model path: {model_path}")
 
-    if not PARAKEET_MODEL.exists():
-        print_error(f"Parakeet model not found: {model_path}")
-        logging.error(f"[TRANSCRIBE] Model file not found: {model_path}")
-        return None
+    # Build mlx-whisper command
+    # mlx-whisper outputs to a .txt file in the output directory
+    cmd = [
+        str(MLX_WHISPER_BIN),
+        audio_path,
+        "--model",
+        MLX_WHISPER_MODEL,
+        "--output-dir",
+        str(video_file.parent),
+        "--output-format",
+        "txt",
+    ]
 
-    transcription_script = f'''
-import nemo.collections.asr as nemo_asr
-import sys
-import time
-
-# Suppress verbose logging
-import logging
-logging.getLogger('nemo_logger').setLevel(logging.ERROR)
-
-audio_file = r"{audio_path}"
-model_path = r"{model_path}"
-
-print("Loading parakeet model...", file=sys.stderr)
-start = time.time()
-
-try:
-    asr_model = nemo_asr.models.ASRModel.restore_from(restore_path=model_path)
-    load_time = time.time() - start
-    print(f"Model loaded in {{load_time:.1f}}s", file=sys.stderr)
-
-    print("Transcribing...", file=sys.stderr)
-    start = time.time()
-    output = asr_model.transcribe([audio_file])
-    transcribe_time = time.time() - start
-
-    print(f"Transcription completed in {{transcribe_time:.1f}}s", file=sys.stderr)
-
-    # Output transcript to stdout
-    if output and len(output) > 0:
-        print(output[0].text)
-    else:
-        print("ERROR: No transcription output", file=sys.stderr)
-        sys.exit(1)
-
-except Exception as e:
-    import traceback
-    print(f"ERROR: {{e}}", file=sys.stderr)
-    traceback.print_exc()
-    sys.exit(1)
-'''
-
-    # Write script to temp file
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        f.write(transcription_script)
-        script_path = f.name
-
-    # Build command to run in conda environment using conda run (more reliable)
-    cmd = f"{CONDA_PATH} run -n {CONDA_ENV} python {script_path}"
-
-    print_info(f"Using parakeet-tdt-0.6b-v3 model...")
-    logging.debug(f"[TRANSCRIBE] Running in conda env '{CONDA_ENV}'")
+    print_info(f"Using {MLX_WHISPER_MODEL} model...")
+    logging.debug(f"[TRANSCRIBE] Running mlx-whisper")
 
     # Get video duration for timeout
     duration_minutes = get_video_duration(video_file)
     if duration_minutes:
         print_info(f"Duration: {duration_minutes} minutes")
         # Timeout = video duration + 2 minutes buffer
-        # Parakeet should be ~10x realtime, so this is very generous
+        # Whisper is fast, but we give generous timeout
         timeout = (duration_minutes * 60) + 120
         timeout = max(300, timeout)  # At least 5 minutes
     else:
@@ -888,40 +877,58 @@ except Exception as e:
     print_info(f"Transcription timeout: {timeout // 60} minutes {timeout % 60} seconds")
 
     start_time = time.time()
-    success, stdout, stderr = run_command(cmd, shell=True, timeout=timeout)
+    success, stdout, stderr = run_command(cmd, timeout=timeout)
     elapsed = time.time() - start_time
 
-    # Clean up temp script file
-    try:
-        os.unlink(script_path)
-    except:
-        pass
-
-    if not success or not stdout.strip():
+    if not success:
         print_error("Transcription failed")
         if stderr:
             print(f"Error: {stderr[-500:]}")
         logging.error(f"[TRANSCRIBE] Failed after {elapsed:.1f}s")
         logging.error(f"[TRANSCRIBE] Full stderr: {stderr}")
         logging.error(f"[TRANSCRIBE] Full stdout: {stdout}")
-        logging.error(f"[TRANSCRIBE] Command was: {cmd}")
+        logging.error(f"[TRANSCRIBE] Command was: {' '.join(cmd)}")
         print_warning("Troubleshooting:")
-        print(f"  1. Ensure conda env '{CONDA_ENV}' exists with nemo_toolkit")
+        print(f"  1. Ensure mlx-whisper is installed in {MLX_WHISPER_DIR}")
         print(
-            f"     conda activate {CONDA_ENV} && python -c 'import nemo.collections.asr'"
+            f"     cd {MLX_WHISPER_DIR} && source .venv/bin/activate && pip install mlx-whisper"
         )
         print("  2. Check video has audio:")
         print(f"     ffprobe -v error -select_streams a:0 {video_file}")
         return None
 
-    # Write transcript to file
-    transcript_text = stdout.strip()
+    # mlx-whisper creates a .txt file based on the audio filename
+    # BUT it truncates long filenames, so we can't rely on exact stem match
+    whisper_output_file = _find_whisper_output(video_file)
+
+    if not whisper_output_file:
+        print_error(f"Whisper output file not found: {whisper_output_file}")
+        logging.error(
+            f"[TRANSCRIBE] Whisper output file not found: {whisper_output_file}"
+        )
+        return None
+
+    # Read transcript from whisper output and write to our expected location
+    try:
+        transcript_text = whisper_output_file.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        print_error(f"Failed to read whisper output: {e}")
+        logging.error(f"[TRANSCRIBE] Failed to read whisper output: {e}")
+        return None
+
     if not transcript_text:
         print_error("Transcription produced empty output")
         logging.error(f"[TRANSCRIBE] Empty transcript")
         return None
 
+    # Write transcript to expected location
     transcript_file.write_text(transcript_text, encoding="utf-8")
+
+    # Clean up whisper's output file (we've copied it to our expected location)
+    try:
+        whisper_output_file.unlink()
+    except:
+        pass
 
     # Get transcript info
     transcript_size = transcript_file.stat().st_size
@@ -936,6 +943,104 @@ except Exception as e:
     )
 
     return transcript_file
+
+
+def transcribe_file_stt(file_path):
+    """
+    Standalone STT mode: transcribe a local audio/video file.
+    Outputs transcript text to stdout, all diagnostics to stderr.
+
+    Args:
+        file_path: Path to audio/video file
+
+    Returns:
+        str: Transcript text, or None on error
+    """
+    audio_file = Path(file_path).resolve()
+
+    if not audio_file.exists():
+        print(f"[-] File not found: {audio_file}", file=sys.stderr)
+        return None
+
+    if not MLX_WHISPER_BIN.exists():
+        print(f"[-] mlx-whisper not found at: {MLX_WHISPER_BIN}", file=sys.stderr)
+        print(
+            f"    Install it in {MLX_WHISPER_DIR} with: pip install mlx-whisper",
+            file=sys.stderr,
+        )
+        return None
+
+    success, _, _ = run_command(["ffmpeg", "-version"], log_output=False)
+    if not success:
+        print(
+            "[-] ffmpeg not found. Install with: brew install ffmpeg", file=sys.stderr
+        )
+        return None
+
+    original_stdout = sys.stdout
+
+    sys.stdout = sys.stderr
+    converted_audio = convert_audio_for_whisper(audio_file)
+    sys.stdout = original_stdout
+
+    if not converted_audio:
+        print("[-] Failed to convert audio for whisper", file=sys.stderr)
+        return None
+
+    audio_path = str(converted_audio.resolve())
+
+    cmd = [
+        str(MLX_WHISPER_BIN),
+        audio_path,
+        "--model",
+        MLX_WHISPER_MODEL,
+        "--output-dir",
+        str(audio_file.parent),
+        "--output-format",
+        "txt",
+    ]
+
+    sys.stdout = sys.stderr
+    start_time = time.time()
+    success, stdout, stderr = run_command(cmd, timeout=300)
+    elapsed = time.time() - start_time
+    sys.stdout = original_stdout
+
+    if not success:
+        print(f"[-] Transcription failed after {elapsed:.1f}s", file=sys.stderr)
+        if stderr:
+            print(f"    Error: {stderr[-500:]}", file=sys.stderr)
+        return None
+
+    whisper_output_file = _find_whisper_output(audio_file)
+
+    if not whisper_output_file:
+        print(
+            f"[-] Whisper output file not found in {audio_file.parent}", file=sys.stderr
+        )
+        return None
+
+    try:
+        transcript_text = whisper_output_file.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        print(f"[-] Failed to read whisper output: {e}", file=sys.stderr)
+        return None
+
+    if not transcript_text:
+        print("[-] Transcription produced empty output", file=sys.stderr)
+        return None
+
+    sys.stdout.write(transcript_text)
+    sys.stdout.flush()
+
+    for f in [converted_audio, whisper_output_file]:
+        try:
+            if f.exists():
+                f.unlink()
+        except OSError:
+            pass
+
+    return transcript_text
 
 
 def copy_transcript(transcript_file):
@@ -1252,11 +1357,14 @@ Examples:
   # With custom output directory (e.g., your Obsidian vault)
   python3.13 tvs.py -u https://youtube.com/watch?v=dQw4w9WgXcQ -a -o /path/to/vault
 
-  # Batch processing from file
-  python3.13 tvs.py --list urls.txt -a -t
+   # Batch processing from file
+   python3.13 tvs.py --list urls.txt -a -t
+
+   # Transcribe a local audio file (standalone STT)
+   python3.13 tvs.py --stt /path/to/audio.ogg
 
 Notes:
-  - Transcription: parakeet-tdt-0.6b-v3 (NVIDIA NeMo, requires conda env 'nemo')
+  - Transcription: mlx-whisper (distil-whisper-large-v3)
   - Videos saved to: {VIDEOS_DIR}/
   - Transcripts/summaries saved to: {WORK_DIR}/ (or custom with -o)
   - URL list file format: one URL per line, blank lines and # comments ignored
@@ -1267,6 +1375,11 @@ Notes:
     group.add_argument("-u", "--url", help="Single video URL (YouTube, etc.)")
     group.add_argument(
         "-l", "--list", help="Text file containing list of URLs (one per line)"
+    )
+    group.add_argument(
+        "--stt",
+        metavar="FILE",
+        help="Transcribe a local audio/video file (standalone STT mode, outputs to stdout)",
     )
 
     parser.add_argument(
@@ -1315,8 +1428,12 @@ Notes:
         print_color_demo()
         return 0
 
-    if not args.url and not args.list:
-        parser.error("one of the arguments -u/--url -l/--list is required")
+    if args.stt:
+        result = transcribe_file_stt(args.stt)
+        return 0 if result else 1
+
+    if not args.url and not args.list and not args.stt:
+        parser.error("one of the arguments -u/--url -l/--list --stt is required")
 
     # Enable unbuffered output if -t flag is used
     if args.terminal:
